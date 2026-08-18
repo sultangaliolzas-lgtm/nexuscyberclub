@@ -59,15 +59,22 @@
 
   function loadStatus() {
     fetch("/api/inventory?t=" + Date.now(), { cache: "no-store", headers: { "X-Telegram-Init-Data": initData } })
-      .then(function (r) { return r.json(); })
-      .then(function (data) {
-        state.spinsAvailable = data.spinsAvailable || 0;
-        state.items = data.items || [];
+      .then(function (r) {
+        return r.json().then(function (data) { return { ok: r.ok, status: r.status, data: data }; });
+      })
+      .then(function (res) {
+        if (!res.ok) {
+          spinHint.textContent = "Ошибка загрузки (" + res.status + "): " + (res.data && res.data.error ? res.data.error : "unknown");
+          spinBtn.disabled = true;
+          return;
+        }
+        state.spinsAvailable = res.data.spinsAvailable || 0;
+        state.items = res.data.items || [];
         updateSpinAvailability();
         renderInventory();
       })
-      .catch(function () {
-        spinHint.textContent = "Не удалось загрузить данные. Обновите страницу.";
+      .catch(function (err) {
+        spinHint.textContent = "Не удалось загрузить данные: " + err.message;
       });
   }
 
