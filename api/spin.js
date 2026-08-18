@@ -14,11 +14,12 @@ module.exports = async function handler(req, res) {
   }
 
   const initData = req.headers["x-telegram-init-data"];
-  const tgUser = verifyInitData(initData, BOT_TOKEN);
-  if (!tgUser) {
-    res.status(401).json({ error: "invalid_init_data" });
+  const auth = verifyInitData(initData, BOT_TOKEN);
+  if (!auth.ok) {
+    res.status(401).json({ error: "invalid_init_data", reason: auth.reason });
     return;
   }
+  const tgUser = auth.user;
 
   try {
     let user = await db.getUser(tgUser.id);

@@ -64,7 +64,7 @@
       })
       .then(function (res) {
         if (!res.ok) {
-          spinHint.textContent = "Ошибка загрузки (" + res.status + "): " + (res.data && res.data.error ? res.data.error : "unknown");
+          spinHint.textContent = "Ошибка загрузки (" + res.status + "): " + (res.data && res.data.reason ? res.data.reason : (res.data && res.data.error ? res.data.error : "unknown"));
           spinBtn.disabled = true;
           return;
         }
