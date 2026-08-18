@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Nexus Roulette</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="app">
+    <header class="header">
+      <h1>NEXUS</h1>
+      <span class="subtitle">Бесплатная рулетка</span>
+    </header>
+
+    <section id="rouletteView" class="view">
+      <div class="wheel-wrap">
+        <div class="wheel" id="wheel">
+          <div class="wheel-icon" id="wheelIcon">🎰</div>
+        </div>
+      </div>
+
+      <div class="result" id="result" hidden>
+        <div class="result-title" id="resultTitle"></div>
+        <div class="result-code" id="resultCode"></div>
+      </div>
+
+      <button class="spin-btn" id="spinBtn" type="button">Крутить</button>
+
+      <p class="hint" id="spinHint">Проверяем доступные прокруты...</p>
+    </section>
+
+    <section id="inventoryView" class="view" hidden>
+      <ul class="inventory-list" id="inventoryList"></ul>
+      <div class="empty-state" id="inventoryEmpty" hidden>
+        <p>Пока нет призов</p>
+        <span>Крути рулетку, чтобы выиграть бонус</span>
+      </div>
+    </section>
+
+    <nav class="tabs">
+      <button class="tab-btn active" data-tab="roulette">Рулетка</button>
+      <button class="tab-btn" data-tab="inventory">Инвентарь</button>
+    </nav>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
