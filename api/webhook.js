@@ -137,8 +137,7 @@ async function sendStart(chatId, firstName) {
     "Шанс выиграть доп. время, скидку, снек, напиток или VIP-апгрейд.";
 
   await sendMessage(chatId, text, {
-    keyboard: [[{ text: "🎰 Открыть рулетку", web_app: { url: WEBAPP_URL } }]],
-    resize_keyboard: true
+    inline_keyboard: [[{ text: "🎰 Открыть рулетку", web_app: { url: WEBAPP_URL } }]]
   });
 }
 
