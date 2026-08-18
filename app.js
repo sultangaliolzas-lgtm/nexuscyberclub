@@ -58,7 +58,7 @@
   }
 
   function loadStatus() {
-    fetch("/api/inventory", { headers: { "X-Telegram-Init-Data": initData } })
+    fetch("/api/inventory?t=" + Date.now(), { cache: "no-store", headers: { "X-Telegram-Init-Data": initData } })
       .then(function (r) { return r.json(); })
       .then(function (data) {
         state.spinsAvailable = data.spinsAvailable || 0;
@@ -89,7 +89,7 @@
     void wheel.offsetWidth;
     wheel.classList.add("spinning");
 
-    fetch("/api/spin", { method: "POST", headers: { "X-Telegram-Init-Data": initData } })
+    fetch("/api/spin", { method: "POST", cache: "no-store", headers: { "X-Telegram-Init-Data": initData } })
       .then(function (r) { return r.json().then(function (data) { return { ok: r.ok, data: data }; }); })
       .then(function (res) {
         setTimeout(function () { showResult(res); }, 2200);
