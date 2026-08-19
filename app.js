@@ -12,13 +12,14 @@
     redeemed: [],
     sectors: [],
     clubName: "NEXUS",
+    nextSpinAt: null,
     spinning: false,
     adminDays: 7,
     prizes: null
   };
 
   var el = {};
-  ["clubName", "spins", "spinsCount", "banner", "strip", "burst",
+  ["clubName", "banner", "strip", "burst", "reelFrame", "timer", "timerValue", "prizeDot",
    "result", "resultIcon", "resultTitle", "resultSub", "resultCode",
    "spinBtn", "hint", "inventoryList", "inventoryEmpty", "historyBlock", "historyList",
    "tabs", "adminNav", "periodNav", "statTiles", "funnelTable", "funnelFoot",
@@ -68,6 +69,7 @@
       .then(function (data) {
         state.role = data.role || "client";
         state.spins = data.spinsAvailable || 0;
+        state.nextSpinAt = data.nextSpinAt || null;
         state.items = data.items || [];
         state.redeemed = data.redeemed || [];
 
@@ -96,6 +98,7 @@
     }
 
     if (res.reason === "cooldown" && res.nextAt) {
+      state.nextSpinAt = res.nextAt;
       el.banner.textContent = "Прокрут за сегодня уже получен. Следующий — через " + until(res.nextAt) + ".";
       el.banner.className = "banner neutral";
       el.banner.hidden = false;
@@ -206,7 +209,7 @@
   function reelCard(sector) {
     var card = document.createElement("div");
     card.className = "reel-item";
-    card.style.setProperty("--tone", sector.color || "#a6ff2f");
+    card.style.setProperty("--tone", toneOf(sector));
 
     var icon = document.createElement("div");
     icon.className = "ri-icon";
@@ -215,10 +218,28 @@
 
     var name = document.createElement("div");
     name.className = "ri-name";
-    name.textContent = sector.shortTitle || sector.title || "";
+    name.textContent = sector.title || sector.shortTitle || "";
     card.appendChild(name);
 
+    if (sector.description) {
+      var desc = document.createElement("div");
+      desc.className = "ri-desc";
+      desc.textContent = sector.description;
+      card.appendChild(desc);
+    }
+
     return card;
+  }
+
+  // Цвет приза идёт в название карточки. Тёмный оттенок (сектор "Пусто")
+  // на тёмном фоне не читается, поэтому подменяем его приглушённым серым.
+  function toneOf(sector) {
+    var color = sector.color || "#a6ff2f";
+    var m = /^#([0-9a-fA-F]{6})$/.exec(color);
+    if (!m) return color;
+    var n = parseInt(m[1], 16);
+    var lum = (0.299 * ((n >> 16) & 255) + 0.587 * ((n >> 8) & 255) + 0.114 * (n & 255)) / 255;
+    return lum < 0.35 ? "#868c9c" : color;
   }
 
   function findSector(key) {
@@ -265,16 +286,14 @@
     el.strip.style.transform = "translateX(" + finish + "px)";
 
     setTimeout(function () {
-      var card = el.strip.children[WIN_AT];
-      if (card) card.classList.add("hit");
+      el.reelFrame.classList.add("hit");
       state.spinning = false;
       done();
     }, 4700);
   }
 
   function clearHit() {
-    var hit = el.strip.querySelector(".reel-item.hit");
-    if (hit) hit.classList.remove("hit");
+    el.reelFrame.classList.remove("hit");
   }
 
   // Ширина окна меняется при повороте телефона, и лента, выставленная
@@ -295,23 +314,82 @@
 
   /* ============================================================ прокрут */
 
+  // Под лентой всегда ровно один блок: кнопка, если прокрут есть,
+  // и обратный отсчёт, если ждём следующего.
   function renderSpins() {
-    el.spinsCount.textContent = state.spins;
-    el.spins.classList.toggle("hot", state.spins > 0);
-
+    updatePrizeDot();
     if (state.spinning) return;
 
     if (state.spins > 0) {
+      stopTicking();
+      el.timer.hidden = true;
+      el.spinBtn.hidden = false;
       el.spinBtn.disabled = false;
       el.spinBtn.textContent = "Крутить";
       el.hint.textContent = state.spins === 1
-        ? "Один прокрут ждёт тебя"
+        ? "Бесплатный прокрут ждёт тебя"
         : "Доступно прокрутов: " + state.spins;
+      return;
+    }
+
+    el.spinBtn.hidden = true;
+
+    if (state.nextSpinAt && new Date(state.nextSpinAt).getTime() > Date.now()) {
+      el.timer.hidden = false;
+      el.hint.textContent = "до следующего бесплатного прокрута";
+      startTicking();
     } else {
-      el.spinBtn.disabled = true;
-      el.spinBtn.textContent = "Прокрутов нет";
+      stopTicking();
+      el.timer.hidden = true;
       el.hint.textContent = "Отсканируй QR-код на ресепшене клуба — прокрут откроется сразу.";
     }
+  }
+
+  function updatePrizeDot() {
+    el.prizeDot.hidden = state.items.length === 0;
+  }
+
+  /* ---------------------------------------------------- обратный отсчёт */
+
+  var ticker = null;
+
+  function startTicking() {
+    stopTicking();
+    tick();
+    ticker = setInterval(tick, 1000);
+  }
+
+  function stopTicking() {
+    if (ticker) {
+      clearInterval(ticker);
+      ticker = null;
+    }
+  }
+
+  function tick() {
+    var left = new Date(state.nextSpinAt).getTime() - Date.now();
+
+    if (left <= 0) {
+      stopTicking();
+      el.timerValue.textContent = "00:00:00";
+      // Время вышло — перечитываем состояние с сервера, а не решаем
+      // сами: прокрут даётся при сканировании, а не по таймеру.
+      loadState();
+      return;
+    }
+
+    el.timerValue.textContent = clock(left);
+  }
+
+  function clock(ms) {
+    var total = Math.floor(ms / 1000);
+    return pad(Math.floor(total / 3600)) + ":" +
+           pad(Math.floor((total % 3600) / 60)) + ":" +
+           pad(total % 60);
+  }
+
+  function pad(n) {
+    return n < 10 ? "0" + n : String(n);
   }
 
   function handleSpin() {
@@ -400,6 +478,7 @@
   /* ============================================================ инвентарь */
 
   function renderInventory() {
+    updatePrizeDot();
     el.inventoryList.innerHTML = "";
     el.inventoryEmpty.hidden = state.items.length !== 0;
 
@@ -803,14 +882,15 @@
       grid.className = "grid";
 
       var fTitle = field("Название", input("text", prize.title || ""), true);
-      var fShort = field("Подпись в секторе", input("text", prize.short_title || ""));
+      var fDesc  = field("Описание на карточке", input("text", prize.description || ""), true);
+      var fShort = field("Короткая подпись", input("text", prize.short_title || ""));
       var fIcon  = field("Иконка", input("text", prize.icon || ""));
       var fWeight = field("Вес (шанс)", input("number", prize.weight));
       var fDays  = field("Сгорает через, дней", input("number", prize.expires_in_days));
       var fLimit = field("Лимит в сутки", input("number", prize.daily_limit === null ? "" : prize.daily_limit));
       var fColor = field("Цвет сектора", input("color", prize.color || "#a6ff2f"));
 
-      [fTitle, fShort, fIcon, fWeight, fDays, fLimit, fColor].forEach(function (f) { grid.appendChild(f.wrap); });
+      [fTitle, fDesc, fShort, fIcon, fWeight, fDays, fLimit, fColor].forEach(function (f) { grid.appendChild(f.wrap); });
       box.appendChild(grid);
 
       var save = document.createElement("button");
@@ -828,6 +908,7 @@
         var patch = {
           key: prize.key,
           title: fTitle.input.value || null,
+          description: fDesc.input.value || null,
           short_title: fShort.input.value || null,
           icon: fIcon.input.value || null,
           weight: Number(fWeight.input.value),

@@ -10,6 +10,7 @@ const { requireOwner, methodGuard } = require("../../lib/guard");
 const EDITABLE = {
   title: (v) => (v === null ? null : String(v).slice(0, 80)),
   short_title: (v) => (v === null ? null : String(v).slice(0, 24)),
+  description: (v) => (v === null ? null : String(v).slice(0, 120)),
   icon: (v) => (v === null ? null : String(v).slice(0, 8)),
   tier: (v) => (v === null ? null : String(v).slice(0, 16)),
   weight: (v) => clampInt(v, 0, 1000),

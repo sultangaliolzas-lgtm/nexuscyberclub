@@ -16,11 +16,12 @@ module.exports = async function handler(req, res) {
   try {
     const user = await db.ensureUser(auth.user);
 
-    const [items, redeemed, prizes, role] = await Promise.all([
+    const [items, redeemed, prizes, role, settings] = await Promise.all([
       db.getInventoryForUser(auth.user.id),
       db.getRedeemedForUser(auth.user.id, 20),
       db.getPrizes(false),
-      roleOf(auth.user.id)
+      roleOf(auth.user.id),
+      db.getSettings()
     ]);
 
     // Иконку берём из справочника призов: в inventory лежит только
@@ -31,6 +32,9 @@ module.exports = async function handler(req, res) {
     res.status(200).json({
       role: role,
       spinsAvailable: user ? user.visits_available : 0,
+      // Когда откроется следующий бесплатный прокрут — на этом
+      // приложение рисует обратный отсчёт вместо кнопки.
+      nextSpinAt: nextSpinAt(user, settings),
       visitsTotal: user ? user.visits_total : 0,
       items: items.map((i) => shape(i, iconByKey)),
       redeemed: redeemed.map((i) => shape(i, iconByKey))
@@ -40,6 +44,12 @@ module.exports = async function handler(req, res) {
     res.status(500).json({ error: "internal_error" });
   }
 };
+
+function nextSpinAt(user, settings) {
+  if (!user || !user.last_checkin_at) return null;
+  const hours = settings.spin_cooldown_hours || 0;
+  return new Date(new Date(user.last_checkin_at).getTime() + hours * 3600000).toISOString();
+}
 
 function shape(i, iconByKey) {
   return {

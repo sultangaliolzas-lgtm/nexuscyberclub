@@ -10,11 +10,8 @@
 <body>
   <div class="app">
 
-    <header class="header">
-      <div class="brand">
-        <!-- Эмблема клуба: хромированный X в кольце. Вектором, чтобы
-             оставаться резкой на любом экране и не тянуть картинку. -->
-        <div class="logo"><svg viewBox="0 0 100 100" aria-hidden="true">
+    <header class="hero">
+      <div class="logo"><svg viewBox="0 0 100 100" aria-hidden="true">
             <defs>
               <linearGradient id="chrome" x1="0" y1="0" x2="0" y2="1">
                 <stop offset="0%"   stop-color="#ffffff"/>
@@ -35,15 +32,8 @@
               <line x1="67" y1="33" x2="33" y2="67" stroke="rgba(0,0,0,0.3)" stroke-width="1.2"/>
             </g>
           </svg></div>
-        <div>
-          <h1 id="clubName">NEXUS</h1>
-          <span class="tagline">Рулетка клуба</span>
-        </div>
-      </div>
-      <div class="spins" id="spins">
-        <span class="spins-count" id="spinsCount">—</span>
-        <span class="spins-label">прокрутов</span>
-      </div>
+      <h1 id="clubName">NEXUS</h1>
+      <span class="tagline">Бесплатная рулетка</span>
     </header>
 
     <!-- ============================ РУЛЕТКА ============================ -->
@@ -52,10 +42,12 @@
       <div class="banner" id="banner" hidden></div>
 
       <div class="reel">
+        <div class="reel-arrow up"></div>
         <div class="reel-window">
           <div class="reel-strip" id="strip"></div>
         </div>
-        <div class="reel-marker"></div>
+        <div class="reel-frame" id="reelFrame"></div>
+        <div class="reel-arrow down"></div>
         <div class="burst" id="burst"></div>
       </div>
 
@@ -66,7 +58,11 @@
         <button class="result-code" id="resultCode" type="button" hidden></button>
       </div>
 
-      <button class="spin-btn" id="spinBtn" type="button" disabled>Крутить</button>
+      <div class="timer" id="timer" hidden>
+        <span class="timer-value" id="timerValue">00:00:00</span>
+      </div>
+
+      <button class="spin-btn" id="spinBtn" type="button" hidden>Крутить</button>
       <p class="hint" id="hint">Загружаем...</p>
 
     </section>
@@ -156,9 +152,9 @@
     </section>
 
     <nav class="tabs" id="tabs">
-      <button class="tab active" data-tab="wheel" type="button"><span>🎰</span>Рулетка</button>
-      <button class="tab" data-tab="inventory" type="button"><span>🎟️</span>Призы</button>
-      <button class="tab" data-tab="admin" type="button" hidden><span>📊</span>Админ</button>
+      <button class="tab active" data-tab="wheel" type="button">Рулетка</button>
+      <button class="tab" data-tab="inventory" type="button">Призы<i class="dot" id="prizeDot" hidden></i></button>
+      <button class="tab" data-tab="admin" type="button" hidden>Админ</button>
     </nav>
 
   </div>

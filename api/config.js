@@ -18,6 +18,7 @@ module.exports = async function handler(req, res) {
           key: p.key,
           title: p.title,
           shortTitle: p.short_title || p.title,
+          description: p.description,
           icon: p.icon,
           tier: p.tier,
           color: p.color,

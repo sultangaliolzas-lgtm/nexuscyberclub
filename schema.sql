@@ -68,6 +68,9 @@ create table if not exists prizes (
   sort_order int not null default 0
 );
 
+-- Описание под названием на карточке ленты: короткое условие приза.
+alter table prizes add column if not exists description text;
+
 insert into prizes (key, title, short_title, icon, tier, weight, expires_in_days, color, sort_order) values
   ('time_30',     '+30 минут игры',       '+30 мин',    '⏱',  'COMMON', 25, 3, '#8be04e', 1),
   ('time_60',     '+1 час игры',          '+1 час',     '🕐', 'RARE',   10, 3, '#31d0ff', 2),
@@ -77,6 +80,19 @@ insert into prizes (key, title, short_title, icon, tier, weight, expires_in_days
   ('vip_upgrade', 'Апгрейд до VIP-места', 'VIP',        '💺', 'EPIC',    5, 2, '#c56bff', 6),
   ('nothing',     null,                   'Пусто',      '⬛', null,     30, 0, '#33363f', 7)
 on conflict (key) do nothing;
+
+update prizes set description = v.d
+  from (values
+    ('time_30',     'Плюс полчаса к игровому времени'),
+    ('time_60',     'Плюс час к игровому времени'),
+    ('discount_10', 'Скидка на следующий визит в клуб'),
+    ('snack',       'Бесплатный снек при покупке от 1 часа'),
+    ('drink',       'Напиток на выбор в подарок'),
+    ('vip_upgrade', 'Пересадка на VIP-место без доплаты'),
+    ('nothing',     'В этот раз не повезло')
+  ) as v(k, d)
+ where prizes.key = v.k and prizes.description is null;
+
 
 
 -- ------------------------------------------------------------
