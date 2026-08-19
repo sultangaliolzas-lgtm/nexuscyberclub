@@ -86,6 +86,29 @@
 
     </section>
 
+    <!-- ============================= КАССА ============================= -->
+    <section id="view-desk" class="view" hidden>
+
+      <h2 class="section-title">Погашение приза</h2>
+
+      <div class="form">
+        <div class="field">
+          <label for="deskCode">Код с телефона клиента</label>
+          <input id="deskCode" type="text" placeholder="NX-1A2B3C4D" maxlength="11"
+                 autocomplete="off" autocapitalize="characters" spellcheck="false">
+        </div>
+        <button class="btn" id="deskSubmit" type="button">Погасить</button>
+      </div>
+
+      <div id="deskResult"></div>
+
+      <p class="foot">Сверять код глазами не нужно. Сервер сам проверит, не использован ли он, не истёк ли и чей он, и сразу пометит погашенным — второй раз тот же код не сработает.</p>
+
+      <h2 class="section-title">Погашено в этой сессии</h2>
+      <ul class="cards compact" id="deskLog"></ul>
+
+    </section>
+
     <!-- ============================= АДМИН ============================= -->
     <section id="view-admin" class="view" hidden>
 
@@ -162,6 +185,7 @@
     <nav class="tabs" id="tabs">
       <button class="tab active" data-tab="wheel" type="button">Рулетка</button>
       <button class="tab" data-tab="inventory" type="button">Призы<i class="dot" id="prizeDot" hidden></i></button>
+      <button class="tab" data-tab="desk" type="button" hidden>Касса</button>
       <button class="tab" data-tab="admin" type="button" hidden>Админ</button>
     </nav>
 

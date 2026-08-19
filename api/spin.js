@@ -26,6 +26,13 @@ module.exports = async function handler(req, res) {
       return;
     }
 
+    // Инвентарь заполнен: прокрут не списан, клиенту надо сначала
+    // забрать своё на стойке.
+    if (result && result.error === "inventory_full") {
+      res.status(409).json(result);
+      return;
+    }
+
     res.status(200).json(result);
   } catch (err) {
     console.error("spin error:", err);

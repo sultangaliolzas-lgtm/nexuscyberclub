@@ -30,6 +30,10 @@ module.exports = async function handler(req, res) {
       const h = Math.round(Number(body.spin_cooldown_hours));
       patch.spin_cooldown_hours = isFinite(h) ? Math.min(720, Math.max(0, h)) : 24;
     }
+    if (body.max_unused_prizes !== undefined) {
+      const cap = Math.round(Number(body.max_unused_prizes));
+      patch.max_unused_prizes = isFinite(cap) ? Math.min(50, Math.max(0, cap)) : 5;
+    }
     if (body.checkin_enabled !== undefined) {
       patch.checkin_enabled = Boolean(body.checkin_enabled);
     }

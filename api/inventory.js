@@ -35,6 +35,7 @@ module.exports = async function handler(req, res) {
       // Когда откроется следующий бесплатный прокрут — на этом
       // приложение рисует обратный отсчёт вместо кнопки.
       nextSpinAt: nextSpinAt(user, settings),
+      maxUnusedPrizes: settings.max_unused_prizes || 0,
       visitsTotal: user ? user.visits_total : 0,
       items: items.map((i) => shape(i, iconByKey)),
       redeemed: redeemed.map((i) => shape(i, iconByKey))

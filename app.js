@@ -13,6 +13,7 @@
     sectors: [],
     clubName: "NEXUS",
     nextSpinAt: null,
+    cap: 0,
     spinning: false,
     adminDays: 7,
     prizes: null
@@ -26,6 +27,7 @@
    "outstandingList", "outstandingFoot", "sourcesList", "activityList",
    "prizeEditor", "clientsList", "clientsFoot", "clientSearch", "grantAmount", "selfGrant",
    "settingsForm", "staffForm", "staffList",
+   "deskCode", "deskSubmit", "deskResult", "deskLog",
    "toast"].forEach(function (id) { el[id] = document.getElementById(id); });
 
   boot();
@@ -40,6 +42,7 @@
     }
 
     bindTabs();
+    bindDesk();
     el.spinBtn.addEventListener("click", handleSpin);
     el.resultCode.addEventListener("click", function () { copy(el.resultCode.dataset.code); });
 
@@ -71,9 +74,13 @@
         state.role = data.role || "client";
         state.spins = data.spinsAvailable || 0;
         state.nextSpinAt = data.nextSpinAt || null;
+        state.cap = data.maxUnusedPrizes || 0;
         state.items = data.items || [];
         state.redeemed = data.redeemed || [];
 
+        if (state.role === "owner" || state.role === "staff") {
+          document.querySelector('.tab[data-tab="desk"]').hidden = false;
+        }
         if (state.role === "owner") {
           document.querySelector('.tab[data-tab="admin"]').hidden = false;
         }
@@ -91,7 +98,9 @@
     if (!res) return;
 
     if (res.granted) {
-      el.banner.textContent = "✅ Визит засчитан. Прокрут открыт — крути!";
+      el.banner.textContent = res.bonus
+        ? "⚡ Бонус Х2 сработал: начислено два прокрута!"
+        : "✅ Визит засчитан. Прокрут открыт — крути!";
       el.banner.className = "banner";
       el.banner.hidden = false;
       haptic("success");
@@ -179,7 +188,7 @@
     document.querySelectorAll(".tab").forEach(function (b) {
       b.classList.toggle("active", b.dataset.tab === tab);
     });
-    ["wheel", "inventory", "admin"].forEach(function (name) {
+    ["wheel", "inventory", "desk", "admin"].forEach(function (name) {
       document.getElementById("view-" + name).hidden = name !== tab;
     });
     if (tab === "admin") loadAdmin();
@@ -337,6 +346,20 @@
     updatePrizeDot();
     if (state.spinning) return;
 
+    // Инвентарь полон: крутить нечего, пока не заберёшь своё.
+    // Кнопку показываем неактивной, чтобы было видно, что дело не
+    // в отсутствии прокрутов.
+    if (state.cap > 0 && state.items.length >= state.cap) {
+      stopTicking();
+      el.timer.hidden = true;
+      el.spinBtn.hidden = false;
+      el.spinBtn.disabled = true;
+      el.spinBtn.textContent = "Забери призы";
+      el.hint.textContent = "У тебя " + state.items.length + " из " + state.cap +
+        " призов не получено. Забери их на стойке клуба, чтобы крутить снова.";
+      return;
+    }
+
     if (state.spins > 0) {
       stopTicking();
       el.timer.hidden = true;
@@ -428,7 +451,9 @@
       })
       .catch(function (err) {
         state.spinning = false;
-        if (err.status === 403) {
+        if (err.status === 409) {
+          toast("Сначала забери призы на стойке", true);
+        } else if (err.status === 403) {
           state.spins = 0;
           toast("Прокрутов больше нет", true);
         } else {
@@ -444,11 +469,23 @@
 
     if (!prize) {
       el.result.className = "result";
-      el.resultIcon.textContent = "🎲";
+      el.resultIcon.textContent = "😔";
       el.resultTitle.textContent = "В этот раз пусто";
       el.resultSub.textContent = "Не расстраивайся — следующий визит, новый прокрут.";
       el.resultCode.hidden = true;
       haptic("warning");
+    } else if (res.effect === "respin" || res.effect === "bonus_next") {
+      // Мгновенные призы срабатывают сразу и не попадают в инвентарь:
+      // гасить на стойке нечего, кода у них нет.
+      el.result.className = "result win";
+      el.resultIcon.textContent = prize.icon || "⚡";
+      el.resultTitle.textContent = prize.title;
+      el.resultSub.textContent = res.effect === "respin"
+        ? "Прокрут вернулся — крути ещё раз прямо сейчас"
+        : "Следующий визит даст два прокрута вместо одного";
+      el.resultCode.hidden = true;
+      haptic("success");
+      burst(prize.color || "#a6ff2f", 22);
     } else {
       el.result.className = "result win";
       el.resultIcon.textContent = prize.icon || "🎁";
@@ -647,6 +684,81 @@
       if (kind === "impact") tg.HapticFeedback.impactOccurred("medium");
       else tg.HapticFeedback.notificationOccurred(kind);
     } catch (e) {}
+  }
+
+  /* ============================================================ касса */
+
+  function bindDesk() {
+    el.deskSubmit.addEventListener("click", redeem);
+    el.deskCode.addEventListener("keydown", function (e) {
+      if (e.key === "Enter") redeem();
+    });
+  }
+
+  function redeem() {
+    var code = el.deskCode.value.trim().toUpperCase();
+    if (!code) return;
+
+    el.deskSubmit.disabled = true;
+    el.deskSubmit.textContent = "Проверяем...";
+
+    api("/api/redeem", { method: "POST", body: { code: code } })
+      .then(function (res) {
+        showVerdict(res);
+        if (res.ok) {
+          el.deskCode.value = "";
+          logRedeemed(res);
+        }
+      })
+      .catch(function (err) {
+        showVerdict({ ok: false, reason: err.data && err.data.reason ? err.data.reason : err.message });
+      })
+      .then(function () {
+        el.deskSubmit.disabled = false;
+        el.deskSubmit.textContent = "Погасить";
+      });
+  }
+
+  var DENIED = {
+    not_found: ["Код не найден", "Проверьте, что код введён целиком и без опечаток."],
+    already_redeemed: ["Код уже погашен", "Этот приз уже выдавали. Повторно он не действует."],
+    expired: ["Срок кода истёк", "Приз сгорел и выдаче не подлежит."],
+    bad_format: ["Неверный формат", "Код выглядит так: NX-1A2B3C4D."]
+  };
+
+  function showVerdict(res) {
+    el.deskResult.innerHTML = "";
+
+    var box = document.createElement("div");
+    box.className = "verdict " + (res.ok ? "ok" : "fail");
+
+    if (res.ok) {
+      box.appendChild(fill("verdict-icon", "✅"));
+      box.appendChild(fill("verdict-title", res.title));
+      box.appendChild(fill("verdict-sub", "Код погашен. Выдайте приз клиенту."));
+      if (res.client) box.appendChild(fill("verdict-client", "Клиент: " + res.client));
+      haptic("success");
+    } else {
+      var text = DENIED[res.reason] || ["Не получилось", "Попробуйте ещё раз."];
+      box.appendChild(fill("verdict-icon", "⛔"));
+      box.appendChild(fill("verdict-title", text[0]));
+      box.appendChild(fill("verdict-sub", text[1]));
+      haptic("error");
+    }
+
+    el.deskResult.appendChild(box);
+  }
+
+  function logRedeemed(res) {
+    var li = document.createElement("li");
+    li.className = "card";
+    li.appendChild(row("✅", res.title, (res.client || "") + " · " + res.code, timeNow()));
+    el.deskLog.insertBefore(li, el.deskLog.firstChild);
+  }
+
+  function timeNow() {
+    var d = new Date();
+    return pad(d.getHours()) + ":" + pad(d.getMinutes());
   }
 
   /* ============================================================ кабинет владельца */
@@ -1102,6 +1214,7 @@
 
         var fName = field("Название клуба", input("text", s.club_name), true);
         var fHours = field("Прокрут по QR не чаще, часов", input("number", s.spin_cooldown_hours), true);
+        var fCap = field("Максимум неполученных призов", input("number", s.max_unused_prizes), true);
 
         var toggleWrap = document.createElement("label");
         toggleWrap.className = "switch";
@@ -1116,10 +1229,12 @@
 
         el.settingsForm.appendChild(fName.wrap);
         el.settingsForm.appendChild(fHours.wrap);
+        el.settingsForm.appendChild(fCap.wrap);
         el.settingsForm.appendChild(toggleWrap);
         el.settingsForm.appendChild(save);
 
-        var note = fill("foot", "24 часа — один прокрут за визит в день. Когда подключим API кассы клуба, здесь можно будет поставить 0 и начислять прокрут за каждую оплату часов.");
+        var note = fill("foot", "24 часа — один прокрут за визит в день. Когда подключим API кассы клуба, здесь можно будет поставить 0 и начислять прокрут за каждую оплату часов. " +
+          "Максимум неполученных призов блокирует рулетку, пока клиент не заберёт своё на стойке: 0 снимает ограничение.");
         el.settingsForm.appendChild(note);
 
         save.addEventListener("click", function () {
@@ -1129,6 +1244,7 @@
             body: {
               club_name: fName.input.value,
               spin_cooldown_hours: Number(fHours.input.value),
+              max_unused_prizes: Number(fCap.input.value),
               checkin_enabled: check.checked
             }
           })

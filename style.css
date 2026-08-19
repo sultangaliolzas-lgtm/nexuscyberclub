@@ -599,6 +599,42 @@ body {
   flex-shrink: 0;
 }
 
+/* ------------------------------------------------------------ касса */
+
+#deskCode {
+  font-family: "SF Mono", Consolas, monospace;
+  font-size: 20px;
+  letter-spacing: 2px;
+  text-align: center;
+  text-transform: uppercase;
+}
+
+.verdict {
+  margin-top: 14px;
+  padding: 16px;
+  border-radius: var(--radius);
+  background: var(--card);
+  border: 1px solid var(--line);
+  text-align: center;
+}
+
+.verdict.ok   { border-color: var(--accent); box-shadow: 0 0 24px rgba(166, 255, 47, 0.16); }
+.verdict.fail { border-color: var(--danger); }
+
+.verdict-icon  { font-size: 38px; line-height: 1; margin-bottom: 6px; }
+.verdict-title { font-size: 18px; font-weight: 800; }
+.verdict.fail .verdict-title { color: var(--danger); }
+.verdict-sub   { margin-top: 5px; font-size: 13px; color: var(--dim); line-height: 1.4; }
+
+.verdict-client {
+  margin-top: 12px;
+  padding: 10px;
+  border-radius: 11px;
+  background: var(--bg-2);
+  font-size: 14px;
+  font-weight: 700;
+}
+
 /* ------------------------------------------------------------ табы */
 
 .tabs {
@@ -626,9 +662,10 @@ body {
   border-radius: 13px;
   background: transparent;
   color: var(--dim);
-  font-size: 15px;
+  font-size: clamp(12px, 3.6vw, 15px);
   font-weight: 700;
   font-family: inherit;
+  white-space: nowrap;
   cursor: pointer;
 }
 

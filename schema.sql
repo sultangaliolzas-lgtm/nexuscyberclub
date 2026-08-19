@@ -23,6 +23,10 @@ create table if not exists users (
 alter table users add column if not exists last_checkin_at timestamptz;
 alter table users add column if not exists visits_total int not null default 0;
 
+-- Приз "Х2 бонус на завтра" не выдаёт предмет, а запоминается здесь и
+-- срабатывает при следующем чек-ине.
+alter table users add column if not exists bonus_next_checkin int not null default 0;
+
 
 -- ------------------------------------------------------------
 --  Выигранные призы
@@ -71,6 +75,11 @@ create table if not exists prizes (
 -- Описание под названием на карточке ленты: короткое условие приза.
 alter table prizes add column if not exists description text;
 
+-- Что делает приз: item — обычный предмет с кодом, respin — сразу
+-- возвращает прокрут, bonus_next — удваивает следующий чек-ин.
+-- Эффекты не создают предмет: гасить на стойке нечего.
+alter table prizes add column if not exists effect text not null default 'item';
+
 insert into prizes (key, title, short_title, description, icon, tier, weight, expires_in_days, color, sort_order) values
   ('discount_10', 'Скидка 10% на визит',   'Скидка 10%',  'Скидка 10% на следующее посещение клуба', '🏷', 'COMMON', 30, 5, '#d4e84a',  1),
   ('kitchen_10',  'Скидка 10% на кухню',   'Кухня −10%',  'Скидка 10% на заказ с кухни',             '🍔', 'COMMON', 30, 5, '#ffa94d',  2),
@@ -99,10 +108,13 @@ create table if not exists settings (
   club_name text not null default 'NEXUS',
   spin_cooldown_hours int not null default 24, -- как часто QR даёт новый прокрут
   checkin_enabled boolean not null default true,
+  max_unused_prizes int not null default 5,    -- 0 = без ограничения
   constraint settings_single_row check (id = 1)
 );
 
 insert into settings (id) values (1) on conflict (id) do nothing;
+
+alter table settings add column if not exists max_unused_prizes int not null default 5;
 
 
 -- ------------------------------------------------------------
@@ -181,8 +193,29 @@ declare
   v_code    text;
   v_expires timestamptz;
   v_try     int := 0;
+  v_cap     int;
+  v_held    int;
 begin
-  -- 1. Атомарно списываем один прокрут. Условие visits_available > 0
+  -- 1. Кап на неиспользованные призы. Пока клиент не заберёт своё,
+  --    новые не выдаём — иначе призы копятся и сгорают пачками, а повод
+  --    прийти в клуб теряется. Проверяем ДО списания, чтобы прокрут
+  --    не пропал впустую.
+  select max_unused_prizes into v_cap from settings where id = 1;
+  v_cap := coalesce(v_cap, 5);
+
+  if v_cap > 0 then
+    select count(*) into v_held
+      from inventory
+     where user_id = p_user_id
+       and status = 'unused'
+       and expires_at > now();
+
+    if v_held >= v_cap then
+      return json_build_object('error', 'inventory_full', 'cap', v_cap, 'held', v_held);
+    end if;
+  end if;
+
+  -- 2. Атомарно списываем один прокрут. Условие visits_available > 0
   --    проверяется той же командой, что и списывает, — гонки нет.
   update users
      set visits_available = visits_available - 1
@@ -194,7 +227,7 @@ begin
     return json_build_object('error', 'no_spins_available');
   end if;
 
-  -- 2. Считаем суммарный вес призов, доступных прямо сейчас:
+  -- 3. Считаем суммарный вес призов, доступных прямо сейчас:
   --    включённых и не упёршихся в дневной лимит.
   select coalesce(sum(p.weight), 0) into v_total
     from prizes p
@@ -221,7 +254,7 @@ begin
      limit 1;
   end if;
 
-  -- 3. Пусто — записываем событие и выходим.
+  -- 4. Пусто — записываем событие и выходим.
   if v_key is null or v_key = 'nothing' then
     insert into events (type, user_id, prize_key)
     values ('spin', p_user_id, coalesce(v_key, 'nothing'));
@@ -235,7 +268,51 @@ begin
 
   select * into v_prize from prizes where key = v_key;
 
-  -- 4. Уникальный код приза. Коллизия почти невозможна, но если
+  -- 5. Мгновенные эффекты. Предмет не создаётся: гасить на стойке нечего,
+  --    приз срабатывает сразу здесь.
+  if v_prize.effect = 'respin' then
+    update users set visits_available = visits_available + 1
+     where id = p_user_id
+    returning visits_available into v_left;
+
+    insert into events (type, user_id, prize_key) values ('spin', p_user_id, v_prize.key);
+
+    return json_build_object(
+      'prizeKey',  v_prize.key,
+      'effect',    'respin',
+      'spinsLeft', v_left,
+      'prize', json_build_object(
+        'key',   v_prize.key,
+        'title', coalesce(v_prize.title, v_prize.short_title, v_prize.key),
+        'icon',  v_prize.icon,
+        'tier',  v_prize.tier,
+        'color', v_prize.color,
+        'code',  null
+      )
+    );
+  end if;
+
+  if v_prize.effect = 'bonus_next' then
+    update users set bonus_next_checkin = 1 where id = p_user_id;
+
+    insert into events (type, user_id, prize_key) values ('spin', p_user_id, v_prize.key);
+
+    return json_build_object(
+      'prizeKey',  v_prize.key,
+      'effect',    'bonus_next',
+      'spinsLeft', v_left,
+      'prize', json_build_object(
+        'key',   v_prize.key,
+        'title', coalesce(v_prize.title, v_prize.short_title, v_prize.key),
+        'icon',  v_prize.icon,
+        'tier',  v_prize.tier,
+        'color', v_prize.color,
+        'code',  null
+      )
+    );
+  end if;
+
+  -- 6. Обычный приз: уникальный код. Коллизия почти невозможна, но если
   --    случится — просто пробуем ещё раз, а не роняем прокрут.
   loop
     v_try := v_try + 1;
@@ -264,6 +341,7 @@ begin
 
   return json_build_object(
     'prizeKey',  v_prize.key,
+    'effect',    'item',
     'spinsLeft', v_left,
     'prize', json_build_object(
       'key',        v_prize.key,
@@ -295,6 +373,7 @@ declare
   v_enabled  boolean;
   v_spins    int;
   v_last     timestamptz;
+  v_bonus    int;
 begin
   select spin_cooldown_hours, checkin_enabled
     into v_cooldown, v_enabled
@@ -307,19 +386,29 @@ begin
     return json_build_object('granted', false, 'reason', 'disabled', 'spinsAvailable', coalesce(v_spins, 0));
   end if;
 
+  -- Бонус читаем заранее: в UPDATE его нужно и прибавить, и обнулить,
+  -- а старое значение оттуда уже не достать.
+  select coalesce(bonus_next_checkin, 0) into v_bonus from users where id = p_user_id;
+
   update users
-     set visits_available = visits_available + 1,
-         visits_total     = visits_total + 1,
-         last_checkin_at  = now()
+     set visits_available   = visits_available + 1 + coalesce(v_bonus, 0),
+         visits_total       = visits_total + 1,
+         last_checkin_at    = now(),
+         bonus_next_checkin = 0
    where id = p_user_id
      and (last_checkin_at is null or last_checkin_at <= now() - make_interval(hours => v_cooldown))
   returning visits_available into v_spins;
 
   if found then
     insert into events (type, user_id, source) values ('checkin', p_user_id, p_source);
-    return json_build_object('granted', true, 'spinsAvailable', v_spins);
+    return json_build_object(
+      'granted', true,
+      'spinsAvailable', v_spins,
+      'bonus', coalesce(v_bonus, 0) > 0
+    );
   end if;
 
+  -- Кулдаун не прошёл: бонус остался нетронутым, UPDATE не сработал.
   select visits_available, last_checkin_at into v_spins, v_last
     from users where id = p_user_id;
 
@@ -343,7 +432,8 @@ returns json
 language plpgsql
 as $$
 declare
-  v_item inventory%rowtype;
+  v_item   inventory%rowtype;
+  v_client text;
 begin
   update inventory
      set status      = 'redeemed',
@@ -358,7 +448,20 @@ begin
     insert into events (type, user_id, actor_id, prize_key, code)
     values ('redeem', v_item.user_id, p_staff_id, v_item.prize_key, v_item.code);
 
-    return json_build_object('ok', true, 'title', v_item.title, 'tier', v_item.tier);
+    -- Сотруднику важно видеть, чей это приз: сверить с тем, кто стоит
+    -- перед ним, и не выдать чужой выигрыш по пересланному скриншоту.
+    select coalesce(u.first_name, '@' || u.username, u.id::text)
+      into v_client
+      from users u where u.id = v_item.user_id;
+
+    return json_build_object(
+      'ok', true,
+      'title', v_item.title,
+      'tier', v_item.tier,
+      'client', v_client,
+      'clientId', v_item.user_id,
+      'wonAt', v_item.won_at
+    );
   end if;
 
   -- Не сработало — разбираемся, почему именно, чтобы сотрудник
