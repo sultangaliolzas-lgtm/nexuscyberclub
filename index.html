@@ -12,8 +12,33 @@
 
     <header class="header">
       <div class="brand">
-        <h1 id="clubName">NEXUS</h1>
-        <span class="tagline">Рулетка клуба</span>
+        <!-- Эмблема клуба: хромированный X в кольце. Вектором, чтобы
+             оставаться резкой на любом экране и не тянуть картинку. -->
+        <div class="logo"><svg viewBox="0 0 100 100" aria-hidden="true">
+            <defs>
+              <linearGradient id="chrome" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%"   stop-color="#ffffff"/>
+                <stop offset="30%"  stop-color="#cdd2d9"/>
+                <stop offset="48%"  stop-color="#5e636c"/>
+                <stop offset="56%"  stop-color="#9aa0a9"/>
+                <stop offset="78%"  stop-color="#eef1f5"/>
+                <stop offset="100%" stop-color="#7c828b"/>
+              </linearGradient>
+            </defs>
+            <circle cx="50" cy="50" r="50" fill="#050506"/>
+            <circle cx="50" cy="50" r="36" fill="none" stroke="url(#chrome)" stroke-width="5.5"/>
+            <circle cx="50" cy="50" r="36" fill="none" stroke="rgba(0,0,0,0.32)" stroke-width="1"/>
+            <g stroke-linecap="square">
+              <line x1="33" y1="33" x2="67" y2="67" stroke="url(#chrome)" stroke-width="8"/>
+              <line x1="67" y1="33" x2="33" y2="67" stroke="url(#chrome)" stroke-width="8"/>
+              <line x1="33" y1="33" x2="67" y2="67" stroke="rgba(0,0,0,0.3)" stroke-width="1.2"/>
+              <line x1="67" y1="33" x2="33" y2="67" stroke="rgba(0,0,0,0.3)" stroke-width="1.2"/>
+            </g>
+          </svg></div>
+        <div>
+          <h1 id="clubName">NEXUS</h1>
+          <span class="tagline">Рулетка клуба</span>
+        </div>
       </div>
       <div class="spins" id="spins">
         <span class="spins-count" id="spinsCount">—</span>
@@ -26,13 +51,11 @@
 
       <div class="banner" id="banner" hidden></div>
 
-      <div class="stage">
-        <div class="halo"></div>
-        <div class="rotor" id="rotor">
-          <svg id="wheelSvg" viewBox="0 0 200 200" aria-hidden="true"></svg>
+      <div class="reel">
+        <div class="reel-window">
+          <div class="reel-strip" id="strip"></div>
         </div>
-        <div class="pointer"></div>
-        <div class="hub"><span id="hubLabel">NX</span></div>
+        <div class="reel-marker"></div>
         <div class="burst" id="burst"></div>
       </div>
 

@@ -12,14 +12,13 @@
     redeemed: [],
     sectors: [],
     clubName: "NEXUS",
-    rotation: 0,      // накопленный угол: колесо всегда крутится вперёд
     spinning: false,
     adminDays: 7,
     prizes: null
   };
 
   var el = {};
-  ["clubName", "spins", "spinsCount", "banner", "rotor", "wheelSvg", "hubLabel", "burst",
+  ["clubName", "spins", "spinsCount", "banner", "strip", "burst",
    "result", "resultIcon", "resultTitle", "resultSub", "resultCode",
    "spinBtn", "hint", "inventoryList", "inventoryEmpty", "historyBlock", "historyList",
    "tabs", "adminNav", "periodNav", "statTiles", "funnelTable", "funnelFoot",
@@ -48,9 +47,8 @@
         state.clubName = cfg.clubName || "NEXUS";
         state.sectors = cfg.sectors || [];
         el.clubName.textContent = state.clubName;
-        el.hubLabel.textContent = state.clubName.slice(0, 2).toUpperCase();
         document.title = state.clubName + " Roulette";
-        renderWheel();
+        idleStrip();
       })
       .catch(function (err) { console.error("config:", err); });
 
@@ -181,137 +179,118 @@
     if (btn) btn.classList.add("active");
   }
 
-  /* ============================================================ колесо */
+  /* ============================================================ лента призов */
 
-  var R = 92;          // радиус колеса в системе координат SVG (viewBox 200x200)
-  var CX = 100, CY = 100;
-  var SVG_NS = "http://www.w3.org/2000/svg";
+  var WIN_AT = 8;                       // позиция выигрыша в ленте
+  var TRAVEL = 42;                      // сколько карточек пролетает мимо метки
+  var STRIP_LEN = WIN_AT + TRAVEL + 8;  // хвост слева, чтобы окно не опустело
 
-  // Сектор занимает долю круга, равную своей доле в общем весе. То есть
-  // шанс, который клиент видит глазами, совпадает с настоящим — и когда
-  // владелец правит вес в кабинете, колесо перерисовывается вместе с ним.
-  function layout() {
-    var total = state.sectors.reduce(function (s, x) { return s + x.weight; }, 0);
-    if (total <= 0) return [];
+  // Лента набирается случайными призами, а нужный подставляется в позицию
+  // WIN_AT. Порядок не повторяется узором — иначе видно, что это цикл.
+  function buildStrip(winnerKey) {
+    if (!state.sectors.length) return;
 
-    var acc = 0;
-    return state.sectors.map(function (sector) {
-      var span = (sector.weight / total) * 360;
-      var item = { sector: sector, start: acc, span: span, mid: acc + span / 2 };
-      acc += span;
-      return item;
-    });
-  }
+    var frag = document.createDocumentFragment();
 
-  function renderWheel() {
-    var svg = el.wheelSvg;
-    svg.innerHTML = "";
-
-    var slices = layout();
-    if (!slices.length) return;
-
-    slices.forEach(function (slice) {
-      var color = slice.sector.color || "#a6ff2f";
-
-      var path = document.createElementNS(SVG_NS, "path");
-      path.setAttribute("d", arcPath(slice.start, slice.start + slice.span));
-      path.setAttribute("fill", color);
-      path.setAttribute("stroke", "#0b0c10");
-      path.setAttribute("stroke-width", "0.8");
-      svg.appendChild(path);
-
-      var ink = readableOn(color);
-
-      if (slice.sector.icon) {
-        svg.appendChild(radialText(slice.sector.icon, slice.mid, 66, "sector-icon", ink));
-      }
-
-      // В узкий сектор подпись не влезет и превратится в кашу — там
-      // оставляем только иконку.
-      if (slice.span >= 24 && slice.sector.shortTitle) {
-        svg.appendChild(radialText(trim(slice.sector.shortTitle, 12), slice.mid, 41, "sector-label", ink));
-      }
-    });
-
-    var rim = document.createElementNS(SVG_NS, "circle");
-    rim.setAttribute("cx", CX);
-    rim.setAttribute("cy", CY);
-    rim.setAttribute("r", R + 3);
-    rim.setAttribute("fill", "none");
-    rim.setAttribute("stroke", "#a6ff2f");
-    rim.setAttribute("stroke-width", "2.5");
-    svg.appendChild(rim);
-
-    slices.forEach(function (slice) {
-      var p = pointAt(slice.start, R + 3);
-      var dot = document.createElementNS(SVG_NS, "circle");
-      dot.setAttribute("cx", p.x);
-      dot.setAttribute("cy", p.y);
-      dot.setAttribute("r", "2.4");
-      dot.setAttribute("fill", "#0b0c10");
-      dot.setAttribute("stroke", "#a6ff2f");
-      dot.setAttribute("stroke-width", "1");
-      svg.appendChild(dot);
-    });
-  }
-
-  // Угол отсчитываем от 12 часов по часовой стрелке — так же, как стоит
-  // указатель, поэтому целевой угол считается без пересчёта систем.
-  function pointAt(angle, radius) {
-    var a = (angle - 90) * Math.PI / 180;
-    return { x: CX + radius * Math.cos(a), y: CY + radius * Math.sin(a) };
-  }
-
-  function arcPath(from, to) {
-    var a = pointAt(from, R);
-    var b = pointAt(to, R);
-    var large = to - from > 180 ? 1 : 0;
-
-    // Полный круг одной дугой не рисуется: начало и конец совпадают,
-    // и браузер не понимает, куда вести линию.
-    if (to - from >= 359.9) {
-      return "M " + CX + " " + (CY - R) +
-             " A " + R + " " + R + " 0 1 1 " + (CX - 0.01) + " " + (CY - R) + " Z";
+    for (var i = 0; i < STRIP_LEN; i++) {
+      var sector = null;
+      if (i === WIN_AT && winnerKey) sector = findSector(winnerKey);
+      if (!sector) sector = state.sectors[Math.floor(Math.random() * state.sectors.length)];
+      frag.appendChild(reelCard(sector));
     }
 
-    return "M " + CX + " " + CY +
-           " L " + a.x.toFixed(2) + " " + a.y.toFixed(2) +
-           " A " + R + " " + R + " 0 " + large + " 1 " + b.x.toFixed(2) + " " + b.y.toFixed(2) +
-           " Z";
+    el.strip.innerHTML = "";
+    el.strip.appendChild(frag);
   }
 
-  // Текст вдоль радиуса: в узком секторе ограничением становится высота
-  // строки, а не её длина, поэтому подписи влезают даже в тонкие доли.
-  function radialText(content, angle, radius, cls, fill) {
-    var p = pointAt(angle, radius);
-    var node = document.createElementNS(SVG_NS, "text");
-    node.setAttribute("x", p.x.toFixed(2));
-    node.setAttribute("y", p.y.toFixed(2));
-    node.setAttribute("text-anchor", "middle");
-    node.setAttribute("dominant-baseline", "central");
-    node.setAttribute("class", cls);
-    if (fill) node.setAttribute("fill", fill);
+  function reelCard(sector) {
+    var card = document.createElement("div");
+    card.className = "reel-item";
+    card.style.setProperty("--tone", sector.color || "#a6ff2f");
 
-    // В левой половине круга строку разворачиваем, иначе она встанет вверх ногами.
-    var rot = angle > 180 ? angle + 90 : angle - 90;
-    node.setAttribute("transform", "rotate(" + rot.toFixed(2) + " " + p.x.toFixed(2) + " " + p.y.toFixed(2) + ")");
-    node.textContent = content;
-    return node;
+    var icon = document.createElement("div");
+    icon.className = "ri-icon";
+    icon.textContent = sector.icon || "🎁";
+    card.appendChild(icon);
+
+    var name = document.createElement("div");
+    name.className = "ri-name";
+    name.textContent = sector.shortTitle || sector.title || "";
+    card.appendChild(name);
+
+    return card;
   }
 
-  // Тёмная подпись на тёмном секторе не читается, поэтому цвет чернил
-  // выбираем по яркости фона.
-  function readableOn(hex) {
-    var m = /^#([0-9a-fA-F]{6})$/.exec(hex);
-    if (!m) return "#0b0c10";
-    var n = parseInt(m[1], 16);
-    var r = (n >> 16) & 255, g = (n >> 8) & 255, b = n & 255;
-    var lum = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
-    return lum > 0.55 ? "#0b0c10" : "#f2f4f8";
+  function findSector(key) {
+    for (var i = 0; i < state.sectors.length; i++) {
+      if (state.sectors[i].key === key) return state.sectors[i];
+    }
+    return null;
   }
 
-  function trim(text, max) {
-    return text.length > max ? text.slice(0, max - 1) + "…" : text;
+  // Шаг ленты меряем по факту, а не берём из константы: если поменяется
+  // ширина карточки в CSS, метка иначе перестанет попадать в приз.
+  function stripStep() {
+    var a = el.strip.children[0];
+    var b = el.strip.children[1];
+    if (!a || !b) return 96;
+    return b.offsetLeft - a.offsetLeft;
+  }
+
+  // Приз выбирает сервер, лента лишь доезжает до его карточки и встаёт
+  // ровно под меткой. Никакой подкрутки после остановки.
+  function rollTo(winnerKey, done) {
+    buildStrip(winnerKey);
+
+    var step = stripStep();
+    var cardWidth = el.strip.children[0] ? el.strip.children[0].offsetWidth : 86;
+    var center = el.strip.parentNode.clientWidth / 2;
+
+    // Небольшой сдвиг внутри карточки: метка не бьёт всегда точно
+    // в середину, и остановка выглядит живой.
+    var jitter = (Math.random() - 0.5) * (cardWidth - 26);
+
+    var finish = center - WIN_AT * step - cardWidth / 2 + jitter;
+    var begin  = center - (WIN_AT + TRAVEL) * step - cardWidth / 2;
+
+    // begin меньше finish, поэтому смещение растёт и лента едет слева направо.
+    el.strip.classList.remove("rolling");
+    el.strip.style.transform = "translateX(" + begin + "px)";
+
+    // Без принудительного пересчёта браузер склеит стартовое и конечное
+    // положение в одно и анимации не будет вовсе.
+    void el.strip.offsetWidth;
+
+    el.strip.classList.add("rolling");
+    el.strip.style.transform = "translateX(" + finish + "px)";
+
+    setTimeout(function () {
+      var card = el.strip.children[WIN_AT];
+      if (card) card.classList.add("hit");
+      state.spinning = false;
+      done();
+    }, 4700);
+  }
+
+  function clearHit() {
+    var hit = el.strip.querySelector(".reel-item.hit");
+    if (hit) hit.classList.remove("hit");
+  }
+
+  // Ширина окна меняется при повороте телефона, и лента, выставленная
+  // по старому центру, съезжает с метки. Пересобираем, пока не крутится.
+  window.addEventListener("resize", function () {
+    if (!state.spinning && el.strip.children.length) idleStrip();
+  });
+
+  // Лента в покое: показываем призы, стоящие вокруг центра.
+  function idleStrip() {
+    buildStrip(null);
+    el.strip.classList.remove("rolling");
+    var step = stripStep();
+    var cardWidth = el.strip.children[0] ? el.strip.children[0].offsetWidth : 86;
+    var center = el.strip.parentNode.clientWidth / 2;
+    el.strip.style.transform = "translateX(" + (center - WIN_AT * step - cardWidth / 2) + "px)";
   }
 
   /* ============================================================ прокрут */
@@ -344,12 +323,13 @@
     el.result.hidden = true;
     el.banner.hidden = true;
     el.hint.textContent = "";
+    clearHit();
     haptic("impact");
 
     api("/api/spin", { method: "POST" })
       .then(function (res) {
         state.spins = typeof res.spinsLeft === "number" ? res.spinsLeft : Math.max(0, state.spins - 1);
-        spinTo(findSlice(res.prizeKey), function () { showResult(res); });
+        rollTo(res.prizeKey, function () { showResult(res); });
       })
       .catch(function (err) {
         state.spinning = false;
@@ -363,39 +343,6 @@
       });
   }
 
-  function findSlice(prizeKey) {
-    var slices = layout();
-    for (var i = 0; i < slices.length; i++) {
-      if (slices[i].sector.key === prizeKey) return slices[i];
-    }
-    return slices[0] || null;
-  }
-
-  // Приз выбирает сервер, колесо лишь доезжает до нужного сектора.
-  // Никакой подкрутки после остановки: где встало — то и выпало.
-  function spinTo(slice, done) {
-    if (!slice) { state.spinning = false; done(); return; }
-
-    // Останавливаемся не строго в центре, а в случайной точке внутри
-    // сектора — так остановка выглядит живой, а не отрепетированной.
-    var jitter = (Math.random() - 0.5) * slice.span * 0.6;
-    var landing = slice.mid + jitter;
-
-    var target = ((360 - landing) % 360 + 360) % 360;
-    var current = ((state.rotation % 360) + 360) % 360;
-    var delta = ((target - current) % 360 + 360) % 360;
-
-    // Всегда добавляем угол вперёд: если крутить назад, колесо дёргается.
-    state.rotation += 360 * 6 + delta;
-
-    el.rotor.classList.add("spinning");
-    el.rotor.style.transform = "rotate(" + state.rotation + "deg)";
-
-    setTimeout(function () {
-      state.spinning = false;
-      done();
-    }, 4300);
-  }
 
   function showResult(res) {
     var prize = res.prize;
@@ -900,7 +847,7 @@
             // сектор сразу меняет ширину, цвет и подпись.
             return api("/api/config").then(function (cfg) {
               state.sectors = cfg.sectors || [];
-              renderWheel();
+              idleStrip();
             });
           })
           .then(function () { loadPrizes(); })

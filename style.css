@@ -13,6 +13,11 @@
 
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
 
+/* Браузер прячет [hidden] правилом display:none из своей таблицы стилей,
+   а любое наше .tab { display: flex } его перебивает по специфичности.
+   Без этой строки вкладка "Админ" видна всем клиентам. */
+[hidden] { display: none !important; }
+
 html, body { margin: 0; padding: 0; min-height: 100%; }
 
 body {
@@ -39,6 +44,19 @@ body {
   gap: 12px;
   margin-bottom: 8px;
 }
+
+.brand { display: flex; align-items: center; gap: 11px; }
+
+.logo {
+  width: 44px;
+  height: 44px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  overflow: hidden;
+  box-shadow: 0 0 18px rgba(166, 255, 47, 0.3);
+}
+
+.logo svg { width: 100%; height: 100%; display: block; }
 
 .brand h1 {
   margin: 0;
@@ -100,89 +118,107 @@ body {
   to   { opacity: 1; transform: none; }
 }
 
-/* ------------------------------------------------------------ колесо */
+/* ------------------------------------------------------------ лента призов */
 
-.stage {
+.reel {
   position: relative;
-  width: min(330px, 88vw);
-  aspect-ratio: 1;
-  margin: 18px auto 8px;
-  display: grid;
-  place-items: center;
+  margin: 22px 0 18px;
 }
 
-.halo {
-  position: absolute;
-  inset: -8%;
-  border-radius: 50%;
-  background: radial-gradient(circle, rgba(166, 255, 47, 0.22) 0%, transparent 62%);
-  filter: blur(14px);
-  animation: pulse 3.4s ease-in-out infinite;
-  pointer-events: none;
+.reel-window {
+  position: relative;
+  overflow: hidden;
+  padding: 14px 0;
+  border-radius: 18px;
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  box-shadow: inset 0 0 44px rgba(0, 0, 0, 0.6), 0 0 30px rgba(166, 255, 47, 0.10);
+  /* Края растворяются, иначе карточки обрубаются ровной линией
+     и лента выглядит как список, а не как движущийся барабан. */
+  -webkit-mask-image: linear-gradient(90deg, transparent 0%, #000 14%, #000 86%, transparent 100%);
+  mask-image: linear-gradient(90deg, transparent 0%, #000 14%, #000 86%, transparent 100%);
 }
 
-@keyframes pulse {
-  0%, 100% { opacity: 0.55; transform: scale(0.97); }
-  50%      { opacity: 1;    transform: scale(1.03); }
-}
-
-.rotor {
-  position: absolute;
-  inset: 0;
-  transform: rotate(0deg);
+.reel-strip {
+  display: flex;
+  gap: 10px;
   will-change: transform;
 }
 
-.rotor.spinning {
-  transition: transform 4.2s cubic-bezier(0.12, 0.75, 0.15, 1);
+.reel-strip.rolling {
+  transition: transform 4.6s cubic-bezier(0.10, 0.72, 0.12, 1);
 }
 
-.rotor svg {
-  width: 100%;
-  height: 100%;
-  display: block;
-  filter: drop-shadow(0 0 18px rgba(166, 255, 47, 0.28));
+.reel-item {
+  flex: 0 0 auto;
+  width: 86px;
+  height: 106px;
+  padding: 8px 6px;
+  border-radius: 14px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-bottom: 3px solid var(--tone, var(--accent));
 }
 
-.sector-label {
-  font-size: 8.5px;
-  font-weight: 800;
-  fill: #0b0c10;
-  letter-spacing: 0.2px;
+.reel-item .ri-icon { font-size: 30px; line-height: 1; }
+
+.reel-item .ri-name {
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.2;
+  text-align: center;
+  color: var(--dim);
 }
 
-.sector-icon { font-size: 13px; }
+/* Выигравшая карточка подсвечивается после остановки.
+   Без color-mix: на iOS старее 16 он не поддерживается, и подсветка
+   пропала бы целиком. */
+.reel-item {
+  transition: transform 0.25s ease, box-shadow 0.25s ease;
+}
 
-.pointer {
+.reel-item.hit {
+  border-color: var(--tone, var(--accent));
+  box-shadow: 0 0 24px rgba(166, 255, 47, 0.4), inset 0 0 22px rgba(255, 255, 255, 0.07);
+  transform: scale(1.07);
+}
+
+.reel-item.hit .ri-name { color: var(--text); }
+
+.reel-marker {
   position: absolute;
-  top: -4px;
+  top: -3px;
+  bottom: -3px;
   left: 50%;
-  width: 0; height: 0;
-  transform: translateX(-50%);
-  border-left: 12px solid transparent;
-  border-right: 12px solid transparent;
-  border-top: 22px solid var(--accent);
-  filter: drop-shadow(0 0 10px rgba(166, 255, 47, 0.9));
+  width: 2px;
+  margin-left: -1px;
+  background: var(--accent);
+  box-shadow: 0 0 14px rgba(166, 255, 47, 0.9);
+  pointer-events: none;
   z-index: 3;
 }
 
-.hub {
+.reel-marker::before,
+.reel-marker::after {
+  content: "";
   position: absolute;
-  width: 24%;
-  aspect-ratio: 1;
-  border-radius: 50%;
-  display: grid;
-  place-items: center;
-  background: linear-gradient(160deg, #1c2029, #0d0f14);
-  border: 2px solid var(--accent);
-  box-shadow: 0 0 24px rgba(166, 255, 47, 0.4), inset 0 0 18px rgba(0, 0, 0, 0.6);
-  font-weight: 900;
-  font-size: 15px;
-  letter-spacing: 1px;
-  color: var(--accent);
-  z-index: 2;
-  pointer-events: none;
+  left: 50%;
+  width: 0;
+  height: 0;
+  transform: translateX(-50%);
+  border-left: 7px solid transparent;
+  border-right: 7px solid transparent;
 }
+
+.reel-marker::before { top: 0;    border-top: 11px solid var(--accent); }
+.reel-marker::after  { bottom: 0; border-bottom: 11px solid var(--accent); }
+
+/* ------------------------------------------------------------ частицы */
 
 .burst { position: absolute; inset: 0; pointer-events: none; z-index: 4; overflow: visible; }
 
