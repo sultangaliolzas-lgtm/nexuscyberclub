@@ -34,7 +34,7 @@ body {
   max-width: 520px;
   margin: 0 auto;
   min-height: 100vh;
-  padding: 16px 16px calc(92px + env(safe-area-inset-bottom));
+  padding: 16px 16px calc(108px + env(safe-area-inset-bottom));
 }
 
 /* ------------------------------------------------------------ шапка */

@@ -286,12 +286,10 @@
     var cardWidth = el.strip.children[0] ? el.strip.children[0].offsetWidth : 86;
     var center = el.strip.parentNode.clientWidth / 2;
 
-    // Небольшой сдвиг внутри карточки: метка не бьёт всегда точно
-    // в середину, и остановка выглядит живой.
-    var jitter = (Math.random() - 0.5) * (cardWidth - 26);
-
-    var finish = center - WIN_AT * step - cardWidth / 2 + jitter;
-    var begin  = center - (WIN_AT + TRAVEL) * step - cardWidth / 2;
+    // Карточка встаёт ровно в центр рамки, без случайного сдвига:
+    // рамка узкая, и любой разброс сразу читается как перекос.
+    var finish = Math.round(center - WIN_AT * step - cardWidth / 2);
+    var begin  = Math.round(center - (WIN_AT + TRAVEL) * step - cardWidth / 2);
 
     // begin меньше finish, поэтому смещение растёт и лента едет слева направо.
     el.strip.classList.remove("rolling");
@@ -328,7 +326,7 @@
     var step = stripStep();
     var cardWidth = el.strip.children[0] ? el.strip.children[0].offsetWidth : 86;
     var center = el.strip.parentNode.clientWidth / 2;
-    el.strip.style.transform = "translateX(" + (center - WIN_AT * step - cardWidth / 2) + "px)";
+    el.strip.style.transform = "translateX(" + Math.round(center - WIN_AT * step - cardWidth / 2) + "px)";
   }
 
   /* ============================================================ прокрут */

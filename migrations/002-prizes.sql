@@ -22,7 +22,7 @@ insert into prizes (key, title, short_title, description, icon, tier, weight, ex
   ('vip_upgrade', 'VIP-место на час',      'VIP час',     'Час на VIP-месте без доплаты',            '💺', 'EPIC',    7, 2, '#00e0c0',  8),
   ('time_120',    '2 часа игры',           '2 часа',      'Два часа игрового времени в подарок',     '🔥', 'EPIC',    5, 2, '#b06bff',  9),
   ('kitchen_30',  'Скидка 30% на кухню',   'Кухня −30%',  'Скидка 30% на заказ с кухни',             '🍽', 'EPIC',    5, 3, '#ff5252', 10),
-  ('nothing',     null,                    'Пусто',       'Не повезло — попробуй завтра',            '⬛', null,      1, 0, '#33363f', 11)
+  ('nothing',     null,                    'Пусто',       'Не повезло — попробуй завтра',            '😔', null,      1, 0, '#33363f', 11)
 on conflict (key) do update set
   title           = excluded.title,
   short_title     = excluded.short_title,
