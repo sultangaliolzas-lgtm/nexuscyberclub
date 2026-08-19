@@ -454,6 +454,7 @@ body {
 
 .prize-edit {
   padding: 13px;
+  overflow: hidden;
   border-radius: var(--radius);
   background: var(--card);
   border: 1px solid var(--line);
@@ -467,10 +468,28 @@ body {
 
 .grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 9px; }
 
-.field { display: flex; flex-direction: column; gap: 4px; }
-.field label { font-size: 10px; text-transform: uppercase; letter-spacing: 0.8px; color: var(--dim); font-weight: 700; }
+/* min-width: 0 обязателен: элемент грида по умолчанию не сужается уже
+   своего содержимого, а у input есть собственная минимальная ширина
+   примерно в 20 символов — без этого колонка распирает карточку
+   и поля уезжают за край экрана. */
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.field label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  color: var(--dim);
+  font-weight: 700;
+}
 
 .field input, .field select {
+  width: 100%;
+  min-width: 0;
   padding: 10px;
   border-radius: 10px;
   border: 1px solid var(--line);
@@ -478,6 +497,12 @@ body {
   color: var(--text);
   font-size: 15px;
   font-family: inherit;
+}
+
+.field input[type="color"] {
+  height: 42px;
+  padding: 4px;
+  cursor: pointer;
 }
 
 .field input:focus, .field select:focus { outline: none; border-color: var(--accent); }
