@@ -355,6 +355,8 @@ body {
   margin-bottom: 14px;
 }
 
+.segmented.small { margin-bottom: 12px; }
+
 .seg {
   flex: 1;
   padding: 9px 4px;
