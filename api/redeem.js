@@ -25,6 +25,14 @@ module.exports = async function handler(req, res) {
   }
 
   try {
+    // Сначала сотрудник смотрит, что это за код и чей он, и только
+    // потом подтверждает. Предпросмотр ничего не меняет.
+    if (req.query && req.query.peek) {
+      const peek = await db.rpc("peek_code", { p_code: code });
+      res.status(200).json(Object.assign({ code: code }, peek));
+      return;
+    }
+
     const result = await db.rpc("do_redeem", { p_code: code, p_staff_id: auth.user.id });
     res.status(200).json(Object.assign({ code: code }, result));
   } catch (err) {

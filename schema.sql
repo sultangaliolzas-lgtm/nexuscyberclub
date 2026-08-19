@@ -27,6 +27,16 @@ alter table users add column if not exists visits_total int not null default 0;
 -- срабатывает при следующем чек-ине.
 alter table users add column if not exists bonus_next_checkin int not null default 0;
 
+-- Телефон Telegram в initData не отдаёт: его можно получить, только если
+-- клиент сам нажмёт "Поделиться номером" в боте. Поэтому колонка
+-- заполняется не всегда.
+alter table users add column if not exists phone text;
+alter table users add column if not exists phone_at timestamptz;
+
+-- Блокировка: заблокированный клиент не получает чек-ины и не крутит.
+alter table users add column if not exists blocked boolean not null default false;
+alter table users add column if not exists blocked_reason text;
+
 
 -- ------------------------------------------------------------
 --  Выигранные призы
@@ -80,18 +90,21 @@ alter table prizes add column if not exists description text;
 -- Эффекты не создают предмет: гасить на стойке нечего.
 alter table prizes add column if not exists effect text not null default 'item';
 
-insert into prizes (key, title, short_title, description, icon, tier, weight, expires_in_days, color, sort_order) values
-  ('discount_10', 'Скидка 10% на визит',   'Скидка 10%',  'Скидка 10% на следующее посещение клуба', '🏷', 'COMMON', 30, 5, '#d4e84a',  1),
-  ('kitchen_10',  'Скидка 10% на кухню',   'Кухня −10%',  'Скидка 10% на заказ с кухни',             '🍔', 'COMMON', 30, 5, '#ffa94d',  2),
-  ('time_30',     '+30 минут игры',        '+30 мин',     'Полчаса игрового времени в подарок',      '⏱', 'COMMON', 20, 3, '#8be04e',  3),
-  ('snack',       'Напиток или снек',      'Напиток/снек','Напиток или снек на выбор за счёт клуба', '🥤', 'COMMON', 15, 3, '#ff5c8a',  4),
-  ('time_60',     '+1 час игры',           '+1 час',      'Час игрового времени в подарок',          '🕐', 'RARE',   12, 3, '#31d0ff',  5),
-  ('discount_20', 'Скидка 20% на визит',   'Скидка 20%',  'Скидка 20% на следующее посещение клуба', '🔖', 'RARE',   10, 5, '#ffd23f',  6),
-  ('kitchen_20',  'Скидка 20% на кухню',   'Кухня −20%',  'Скидка 20% на заказ с кухни',             '🍕', 'RARE',   10, 5, '#ff7a45',  7),
-  ('vip_upgrade', 'VIP-место на час',      'VIP час',     'Час на VIP-месте без доплаты',            '💺', 'EPIC',    7, 2, '#00e0c0',  8),
-  ('time_120',    '2 часа игры',           '2 часа',      'Два часа игрового времени в подарок',     '🔥', 'EPIC',    5, 2, '#b06bff',  9),
-  ('kitchen_30',  'Скидка 30% на кухню',   'Кухня −30%',  'Скидка 30% на заказ с кухни',             '🍽', 'EPIC',    5, 3, '#ff5252', 10),
-  ('nothing',     null,                    'Пусто',       'Не повезло — попробуй завтра',            '😔', null,      1, 0, '#33363f', 11)
+-- Себестоимость одной выдачи в валюте клуба. Для скидок это
+-- недополученная выручка — владелец оценивает сам.
+alter table prizes add column if not exists cost numeric(10,2) not null default 0;
+
+insert into prizes (key, title, short_title, description, icon, tier, weight, expires_in_days, color, sort_order, effect, cost) values
+  ('time_30',     '+30 минут игры',      '+30 мин',   'Полчаса игрового времени в подарок',              '⏱', 'COMMON', 25, 3, '#8be04e',  1, 'item',       0),
+  ('drink',       'Напиток в подарок',   'Напиток',   'Напиток на выбор за счёт клуба',                  '🥤', 'COMMON', 20, 3, '#ff5c8a',  2, 'item',       0),
+  ('snack',       'Снек в подарок',      'Снек',      'Снек на выбор за счёт клуба',                     '🍿', 'COMMON', 15, 3, '#ffb02e',  3, 'item',       0),
+  ('discount_10', 'Скидка 10% на визит', 'Скидка 10%','Скидка 10% на следующее посещение клуба',         '🏷', 'COMMON', 15, 5, '#d4e84a',  4, 'item',       0),
+  ('time_60',     '+1 час игры',         '+1 час',    'Час игрового времени в подарок',                  '🕐', 'RARE',   12, 3, '#31d0ff',  5, 'item',       0),
+  ('discount_20', 'Скидка 20% на визит', 'Скидка 20%','Скидка 20% на следующее посещение клуба',         '🔖', 'RARE',    6, 5, '#ffd23f',  6, 'item',       0),
+  ('vip_upgrade', 'VIP-место на час',    'VIP час',   'Час на VIP-месте без доплаты',                    '💺', 'RARE',    5, 2, '#00e0c0',  7, 'item',       0),
+  ('time_120',    '2 часа игры',         '2 часа',    'Два часа игрового времени в подарок',             '🔥', 'EPIC',    5, 2, '#ff4d4d',  8, 'item',       0),
+  ('bonus_x2',    'Х2 бонус на завтра',  'Х2 завтра', 'Следующий визит даст два прокрута вместо одного', '⚡', 'RARE',    4, 1, '#c56bff',  9, 'bonus_next', 0),
+  ('respin',      'Крути ещё раз',       'Ещё раз',   'Прокрут возвращается — крути сразу снова',        '🔄', 'EPIC',    3, 1, '#a6ff2f', 10, 'respin',     0)
 on conflict (key) do nothing;
 
 -- Правки владельца из кабинета не затираются: on conflict do nothing.
@@ -115,6 +128,7 @@ create table if not exists settings (
 insert into settings (id) values (1) on conflict (id) do nothing;
 
 alter table settings add column if not exists max_unused_prizes int not null default 5;
+alter table settings add column if not exists currency text not null default '₸';
 
 
 -- ------------------------------------------------------------
@@ -152,6 +166,24 @@ create table if not exists events (
 create index if not exists events_created_idx on events(created_at desc);
 create index if not exists events_type_idx on events(type);
 create index if not exists events_user_idx on events(user_id);
+
+
+-- ------------------------------------------------------------
+--  История изменений настроек: кто, когда и что менял.
+--  Отдельно от events, потому что здесь важны прежние значения,
+--  а не сам факт события.
+-- ------------------------------------------------------------
+
+create table if not exists config_log (
+  id bigserial primary key,
+  actor_id bigint,
+  entity text not null,          -- prize | settings
+  entity_key text,
+  changes jsonb not null,        -- {поле: {from: ..., to: ...}}
+  created_at timestamptz not null default now()
+);
+
+create index if not exists config_log_created_idx on config_log(created_at desc);
 
 
 -- ============================================================
@@ -196,6 +228,12 @@ declare
   v_cap     int;
   v_held    int;
 begin
+  -- 0. Заблокированный клиент не крутит. Проверка здесь, а не в Node:
+  --    так её нельзя обойти, зайдя мимо приложения.
+  if (select blocked from users where id = p_user_id) then
+    return json_build_object('error', 'blocked');
+  end if;
+
   -- 1. Кап на неиспользованные призы. Пока клиент не заберёт своё,
   --    новые не выдаём — иначе призы копятся и сгорают пачками, а повод
   --    прийти в клуб теряется. Проверяем ДО списания, чтобы прокрут
@@ -381,6 +419,10 @@ begin
 
   v_cooldown := coalesce(v_cooldown, 24);
 
+  if (select blocked from users where id = p_user_id) then
+    return json_build_object('granted', false, 'reason', 'blocked', 'spinsAvailable', 0);
+  end if;
+
   if not coalesce(v_enabled, true) then
     select visits_available into v_spins from users where id = p_user_id;
     return json_build_object('granted', false, 'reason', 'disabled', 'spinsAvailable', coalesce(v_spins, 0));
@@ -482,6 +524,82 @@ $$;
 
 
 -- ------------------------------------------------------------
+--  Предпросмотр кода для кассы: что это за приз, чей он и годен ли.
+--  Ничего не меняет — сотрудник сначала видит, потом решает.
+-- ------------------------------------------------------------
+
+create or replace function peek_code(p_code text)
+returns json
+language plpgsql
+stable
+as $$
+declare
+  v_item   inventory%rowtype;
+  v_client text;
+  v_status text;
+begin
+  select * into v_item from inventory where upper(code) = upper(p_code);
+
+  if not found then
+    return json_build_object('found', false, 'reason', 'not_found');
+  end if;
+
+  select coalesce(u.first_name, '@' || u.username, u.id::text)
+    into v_client
+    from users u where u.id = v_item.user_id;
+
+  if v_item.status = 'redeemed' then
+    v_status := 'already_redeemed';
+  elsif v_item.expires_at <= now() then
+    v_status := 'expired';
+  else
+    v_status := 'ok';
+  end if;
+
+  return json_build_object(
+    'found', true,
+    'status', v_status,
+    'title', v_item.title,
+    'tier', v_item.tier,
+    'code', v_item.code,
+    'client', v_client,
+    'clientId', v_item.user_id,
+    'wonAt', v_item.won_at,
+    'expiresAt', v_item.expires_at,
+    'redeemedAt', v_item.redeemed_at
+  );
+end;
+$$;
+
+
+-- ------------------------------------------------------------
+--  Прокруты и чек-ины по дням — для графика на главной кабинета.
+-- ------------------------------------------------------------
+
+create or replace function admin_daily(p_days int)
+returns json
+language sql
+stable
+as $$
+  select coalesce(json_agg(row_to_json(t) order by t.day), '[]'::json)
+    from (
+      select d::date as day,
+             (select count(*) from events e
+               where e.type = 'spin' and e.created_at >= d and e.created_at < d + interval '1 day')::int as spins,
+             (select count(*) from events e
+               where e.type = 'checkin' and e.created_at >= d and e.created_at < d + interval '1 day')::int as checkins,
+             (select count(*) from users u
+               where u.created_at >= d and u.created_at < d + interval '1 day')::int as newcomers
+        from generate_series(
+               date_trunc('day', now()) - make_interval(days => greatest(p_days, 1) - 1),
+               date_trunc('day', now()),
+               interval '1 day'
+             ) d
+    ) t;
+$$;
+
+
+-- ------------------------------------------------------------
 --  Начисление прокрута сотрудником вручную (запасной путь, если
 --  клиент не смог отсканировать QR).
 -- ------------------------------------------------------------
@@ -521,22 +639,57 @@ $$;
 --  Причём won = redeemed + outstanding + expired, цифры всегда сходятся.
 -- ------------------------------------------------------------
 
+-- Метрики за произвольный отрезок. Вынесено отдельной функцией, чтобы
+-- тем же кодом посчитать текущий период и предыдущий для сравнения.
+create or replace function period_summary(p_from timestamptz, p_to timestamptz)
+returns json
+language sql
+stable
+as $$
+  select json_build_object(
+    'spins',         (select count(*) from events where type = 'spin' and created_at >= p_from and created_at < p_to),
+    'checkins',      (select count(*) from events where type = 'checkin' and created_at >= p_from and created_at < p_to),
+    'emptySpins',    (select count(*) from events where type = 'spin' and prize_key = 'nothing' and created_at >= p_from and created_at < p_to),
+    'prizesWon',     (select count(*) from inventory where won_at >= p_from and won_at < p_to),
+    'redeemed',      (select count(*) from inventory where won_at >= p_from and won_at < p_to and status = 'redeemed'),
+    'expired',       (select count(*) from inventory where won_at >= p_from and won_at < p_to and status = 'unused' and expires_at <= now()),
+    'uniqueClients', (select count(distinct user_id) from events where type = 'spin' and created_at >= p_from and created_at < p_to),
+    'newClients',    (select count(*) from users where created_at >= p_from and created_at < p_to),
+    'totalClients',  (select count(*) from users),
+    'spinsPending',  (select coalesce(sum(visits_available), 0) from users),
+    -- Потрачено — по факту выдачи приза на стойке, а не по выигрышу.
+    'spent',         (select coalesce(sum(p.cost), 0)::numeric(12,2) from inventory i
+                        join prizes p on p.key = i.prize_key
+                       where i.status = 'redeemed' and i.redeemed_at >= p_from and i.redeemed_at < p_to)
+  );
+$$;
+
+
 create or replace function admin_stats(p_days int)
 returns json
 language plpgsql
 stable
 as $$
 declare
-  v_from        timestamptz := now() - make_interval(days => greatest(p_days, 1));
+  v_days        int         := greatest(p_days, 1);
+  v_from        timestamptz := now() - make_interval(days => v_days);
+  v_prev_from   timestamptz := now() - make_interval(days => v_days * 2);
+  v_today       timestamptz := date_trunc('day', now());
+  v_currency    text;
   v_prizes      json;
   v_summary     json;
+  v_previous    json;
   v_sources     json;
   v_outstanding json;
 begin
+  select currency into v_currency from settings where id = 1;
+
+  -- Воронка приза: выпал -> забрали -> висит на руках -> сгорел.
+  -- Цифры сходятся: выпал = забрали + на руках + сгорел.
   select coalesce(json_agg(row_to_json(t) order by t.sort_order), '[]'::json)
     into v_prizes
     from (
-      select p.key, p.title, p.short_title, p.icon, p.tier, p.color, p.sort_order,
+      select p.key, p.title, p.short_title, p.icon, p.tier, p.color, p.sort_order, p.cost,
              (select count(*) from inventory i
                where i.prize_key = p.key and i.won_at >= v_from)::int as won,
              (select count(*) from inventory i
@@ -547,24 +700,17 @@ begin
                  and i.status = 'unused' and i.expires_at > now())::int as outstanding,
              (select count(*) from inventory i
                where i.prize_key = p.key and i.won_at >= v_from
-                 and i.status = 'unused' and i.expires_at <= now())::int as expired
+                 and i.status = 'unused' and i.expires_at <= now())::int as expired,
+             -- Реальные деньги — только по забранным призам.
+             (p.cost * (select count(*) from inventory i
+               where i.prize_key = p.key and i.status = 'redeemed'
+                 and i.redeemed_at >= v_from))::numeric(12,2) as spent
         from prizes p
        where p.key <> 'nothing'
     ) t;
 
-  select json_build_object(
-    'spins',          (select count(*) from events where type = 'spin' and created_at >= v_from),
-    'checkins',       (select count(*) from events where type = 'checkin' and created_at >= v_from),
-    'emptySpins',     (select count(*) from events where type = 'spin' and prize_key = 'nothing' and created_at >= v_from),
-    'prizesWon',      (select count(*) from inventory where won_at >= v_from),
-    'redeemed',       (select count(*) from inventory where won_at >= v_from and status = 'redeemed'),
-    'expired',        (select count(*) from inventory where won_at >= v_from and status = 'unused' and expires_at <= now()),
-    'outstandingAll', (select count(*) from inventory where status = 'unused' and expires_at > now()),
-    'uniqueClients',  (select count(distinct user_id) from events where type = 'spin' and created_at >= v_from),
-    'newClients',     (select count(*) from users where created_at >= v_from),
-    'totalClients',   (select count(*) from users),
-    'spinsPending',   (select coalesce(sum(visits_available), 0) from users)
-  ) into v_summary;
+  v_summary := period_summary(v_from, now());
+  v_previous := period_summary(v_prev_from, v_from);
 
   select coalesce(json_agg(json_build_object('source', coalesce(s.source, '—'), 'count', s.c) order by s.c desc), '[]'::json)
     into v_sources
@@ -589,10 +735,29 @@ begin
     ) t;
 
   return json_build_object(
+    'currency',    coalesce(v_currency, '₸'),
     'summary',     v_summary,
+    'previous',    v_previous,
     'prizes',      v_prizes,
     'sources',     v_sources,
-    'outstanding', v_outstanding
+    'outstanding', v_outstanding,
+    'daily',       admin_daily(7),
+    -- Обязательства и траты за сегодня считаются вне периода:
+    -- владельцу они нужны как есть, а не за выбранный отрезок.
+    'today', json_build_object(
+      'spins',    (select count(*) from events where type = 'spin' and created_at >= v_today),
+      'checkins', (select count(*) from events where type = 'checkin' and created_at >= v_today),
+      'newcomers',(select count(*) from users where created_at >= v_today),
+      'spent',    (select coalesce(sum(p.cost), 0)::numeric(12,2) from inventory i
+                     join prizes p on p.key = i.prize_key
+                    where i.status = 'redeemed' and i.redeemed_at >= v_today)
+    ),
+    'liability', json_build_object(
+      'count', (select count(*) from inventory where status = 'unused' and expires_at > now()),
+      'cost',  (select coalesce(sum(p.cost), 0)::numeric(12,2) from inventory i
+                  join prizes p on p.key = i.prize_key
+                 where i.status = 'unused' and i.expires_at > now())
+    )
   );
 end;
 $$;
@@ -602,20 +767,101 @@ $$;
 --  База клиентов для кабинета владельца.
 -- ------------------------------------------------------------
 
-create or replace function admin_clients(p_limit int default 100)
+create or replace function admin_clients(p_limit int default 200)
 returns json
 language sql
 stable
 as $$
   select coalesce(json_agg(row_to_json(t) order by t.last_seen desc), '[]'::json)
     from (
-      select u.id, u.first_name, u.username, u.visits_total, u.visits_available,
-             u.created_at, u.last_checkin_at,
+      select u.id, u.first_name, u.username, u.phone, u.blocked, u.blocked_reason,
+             u.visits_total, u.visits_available, u.created_at, u.last_checkin_at,
              coalesce(u.last_checkin_at, u.created_at) as last_seen,
              (select count(*) from inventory i where i.user_id = u.id)::int as won,
-             (select count(*) from inventory i where i.user_id = u.id and i.status = 'redeemed')::int as redeemed
+             (select count(*) from inventory i where i.user_id = u.id and i.status = 'redeemed')::int as redeemed,
+             (select count(*) from inventory i
+               where i.user_id = u.id and i.status = 'unused' and i.expires_at > now())::int as holding
         from users u
        order by coalesce(u.last_checkin_at, u.created_at) desc
+       limit p_limit
+    ) t;
+$$;
+
+
+-- ------------------------------------------------------------
+--  Блокировка клиента. Заблокированный не получает чек-ины и не крутит,
+--  но его история и выданные призы остаются на месте.
+-- ------------------------------------------------------------
+
+create or replace function set_blocked(p_user_id bigint, p_actor_id bigint, p_blocked boolean, p_reason text)
+returns json
+language plpgsql
+as $$
+declare
+  v_blocked boolean;
+begin
+  update users
+     set blocked = p_blocked,
+         blocked_reason = case when p_blocked then p_reason else null end
+   where id = p_user_id
+  returning blocked into v_blocked;
+
+  if not found then
+    return json_build_object('ok', false, 'reason', 'not_found');
+  end if;
+
+  insert into config_log (actor_id, entity, entity_key, changes)
+  values (p_actor_id, 'client', p_user_id::text,
+          json_build_object('blocked', json_build_object('to', p_blocked, 'reason', p_reason))::jsonb);
+
+  return json_build_object('ok', true, 'blocked', v_blocked);
+end;
+$$;
+
+
+-- ------------------------------------------------------------
+--  Выгрузка призов за период — сырьё для CSV-отчёта.
+-- ------------------------------------------------------------
+
+create or replace function admin_export(p_days int)
+returns json
+language sql
+stable
+as $$
+  select coalesce(json_agg(row_to_json(t) order by t.won_at desc), '[]'::json)
+    from (
+      select i.won_at, i.redeemed_at, i.expires_at, i.code, i.title, i.tier,
+             i.prize_key, i.status, p.cost,
+             u.id as client_id, u.first_name, u.username, u.phone,
+             case
+               when i.status = 'redeemed'            then 'забран'
+               when i.expires_at <= now()            then 'сгорел'
+               else                                       'на руках'
+             end as состояние
+        from inventory i
+        join users u on u.id = i.user_id
+        left join prizes p on p.key = i.prize_key
+       where i.won_at >= now() - make_interval(days => greatest(p_days, 1))
+    ) t;
+$$;
+
+
+-- ------------------------------------------------------------
+--  История изменений настроек: кто и что менял.
+-- ------------------------------------------------------------
+
+create or replace function admin_config_log(p_limit int default 40)
+returns json
+language sql
+stable
+as $$
+  select coalesce(json_agg(row_to_json(t) order by t.created_at desc), '[]'::json)
+    from (
+      select c.entity, c.entity_key, c.changes, c.created_at,
+             coalesce(a.first_name, '@' || a.username, c.actor_id::text) as actor
+        from config_log c
+        left join users a on a.id = c.actor_id
+       order by c.created_at desc
        limit p_limit
     ) t;
 $$;
@@ -656,7 +902,8 @@ alter table inventory enable row level security;
 alter table prizes    enable row level security;
 alter table settings  enable row level security;
 alter table staff     enable row level security;
-alter table events    enable row level security;
+alter table events     enable row level security;
+alter table config_log enable row level security;
 
 
 -- PostgREST держит схему в кэше и не увидит новые функции, пока его

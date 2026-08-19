@@ -14,6 +14,9 @@
     clubName: "NEXUS",
     nextSpinAt: null,
     cap: 0,
+    currency: "₸",
+    exportDays: 30,
+    clientSort: "recent",
     spinning: false,
     adminDays: 7,
     prizes: null
@@ -24,10 +27,11 @@
    "result", "resultIcon", "resultTitle", "resultSub", "resultCode",
    "spinBtn", "hint", "inventoryList", "inventoryEmpty", "historyBlock", "historyList",
    "tabs", "adminNav", "periodNav", "statTiles", "funnelTable", "funnelFoot",
+   "todayTiles", "chart", "liability", "clientSort", "exportNav", "exportBtn", "configLog",
    "outstandingList", "outstandingFoot", "sourcesList", "activityList",
    "prizeEditor", "clientsList", "clientsFoot", "clientSearch", "grantAmount", "selfGrant",
    "settingsForm", "staffForm", "staffList",
-   "deskCode", "deskSubmit", "deskResult", "deskLog",
+   "deskCode", "deskSubmit", "deskScan", "deskResult", "deskLog", "deskHint",
    "toast"].forEach(function (id) { el[id] = document.getElementById(id); });
 
   boot();
@@ -43,6 +47,7 @@
 
     bindTabs();
     bindDesk();
+    bindExport();
     el.spinBtn.addEventListener("click", handleSpin);
     el.resultCode.addEventListener("click", function () { copy(el.resultCode.dataset.code); });
 
@@ -158,6 +163,14 @@
     });
 
     el.clientSearch.addEventListener("input", renderClients);
+
+    el.clientSort.addEventListener("click", function (e) {
+      var btn = e.target.closest(".seg");
+      if (!btn) return;
+      state.clientSort = btn.dataset.sort;
+      markActive(el.clientSort, btn);
+      renderClients();
+    });
 
     el.selfGrant.addEventListener("click", function () {
       el.selfGrant.disabled = true;
@@ -571,6 +584,18 @@
       code.textContent = item.code;
       li.appendChild(code);
 
+      // QR рисует сервер: сотруднику быстрее отсканировать его, чем
+      // набирать код руками, а тянуть в приложение библиотеку ради
+      // одной картинки незачем.
+      var qr = document.createElement("div");
+      qr.className = "prize-qr";
+      var img = document.createElement("img");
+      img.src = "/api/qr?code=" + encodeURIComponent(item.code);
+      img.alt = item.code;
+      img.loading = "lazy";
+      qr.appendChild(img);
+      li.appendChild(qr);
+
       var hint = document.createElement("div");
       hint.className = "card-hint";
       hint.textContent = "Нажми, чтобы показать код сотруднику";
@@ -689,33 +714,57 @@
   /* ============================================================ касса */
 
   function bindDesk() {
-    el.deskSubmit.addEventListener("click", redeem);
+    el.deskSubmit.addEventListener("click", check);
     el.deskCode.addEventListener("keydown", function (e) {
-      if (e.key === "Enter") redeem();
+      if (e.key === "Enter") check();
     });
+
+    // Сканер есть только в свежих версиях Telegram — кнопку показываем,
+    // лишь когда он действительно доступен.
+    if (tg && tg.showScanQrPopup) {
+      el.deskScan.hidden = false;
+      el.deskScan.addEventListener("click", scan);
+    }
   }
 
-  function redeem() {
+  function scan() {
+    try {
+      tg.showScanQrPopup({ text: "Наведите на QR-код приза в телефоне клиента" }, function (text) {
+        var code = extractCode(text);
+        if (!code) return false;          // не тот QR — оставляем сканер открытым
+        el.deskCode.value = code;
+        tg.closeScanQrPopup();
+        check();
+        return true;
+      });
+    } catch (e) {
+      toast("Сканер недоступен в этой версии Telegram", true);
+    }
+  }
+
+  // В QR может лежать и голый код, и ссылка с ним внутри.
+  function extractCode(text) {
+    var found = /NX-[A-F0-9]{8}/i.exec(String(text || ""));
+    return found ? found[0].toUpperCase() : null;
+  }
+
+  // Шаг первый: сотрудник видит, что это за приз и чей он. Ничего
+  // не меняется, пока он не подтвердит.
+  function check() {
     var code = el.deskCode.value.trim().toUpperCase();
     if (!code) return;
 
     el.deskSubmit.disabled = true;
     el.deskSubmit.textContent = "Проверяем...";
 
-    api("/api/redeem", { method: "POST", body: { code: code } })
-      .then(function (res) {
-        showVerdict(res);
-        if (res.ok) {
-          el.deskCode.value = "";
-          logRedeemed(res);
-        }
-      })
+    api("/api/redeem?peek=1", { method: "POST", body: { code: code } })
+      .then(showPeek)
       .catch(function (err) {
-        showVerdict({ ok: false, reason: err.data && err.data.reason ? err.data.reason : err.message });
+        showVerdict({ ok: false, reason: (err.data && err.data.reason) || err.message });
       })
       .then(function () {
         el.deskSubmit.disabled = false;
-        el.deskSubmit.textContent = "Погасить";
+        el.deskSubmit.textContent = "Проверить код";
       });
   }
 
@@ -725,6 +774,58 @@
     expired: ["Срок кода истёк", "Приз сгорел и выдаче не подлежит."],
     bad_format: ["Неверный формат", "Код выглядит так: NX-1A2B3C4D."]
   };
+
+  function showPeek(res) {
+    el.deskResult.innerHTML = "";
+
+    if (!res.found) {
+      showVerdict({ ok: false, reason: res.reason || "not_found" });
+      return;
+    }
+
+    if (res.status !== "ok") {
+      showVerdict({ ok: false, reason: res.status, extra: res });
+      return;
+    }
+
+    var box = document.createElement("div");
+    box.className = "verdict ok";
+    box.appendChild(fill("verdict-icon", "🎁"));
+    box.appendChild(fill("verdict-title", res.title));
+    box.appendChild(fill("verdict-sub", "Выигран " + shortDate(res.wonAt) + " · сгорает через " + until(res.expiresAt)));
+    box.appendChild(fill("verdict-client", "Клиент: " + res.client));
+
+    var confirm = document.createElement("button");
+    confirm.className = "btn";
+    confirm.type = "button";
+    confirm.textContent = "Погасить и выдать";
+    confirm.style.marginTop = "14px";
+    confirm.style.width = "100%";
+    box.appendChild(confirm);
+
+    confirm.addEventListener("click", function () {
+      confirm.disabled = true;
+      confirm.textContent = "Гасим...";
+      redeem(res.code);
+    });
+
+    el.deskResult.appendChild(box);
+    haptic("impact");
+  }
+
+  function redeem(code) {
+    api("/api/redeem", { method: "POST", body: { code: code } })
+      .then(function (res) {
+        showVerdict(res);
+        if (res.ok) {
+          el.deskCode.value = "";
+          logRedeemed(res);
+        }
+      })
+      .catch(function (err) {
+        showVerdict({ ok: false, reason: (err.data && err.data.reason) || err.message });
+      });
+  }
 
   function showVerdict(res) {
     el.deskResult.innerHTML = "";
@@ -743,6 +844,9 @@
       box.appendChild(fill("verdict-icon", "⛔"));
       box.appendChild(fill("verdict-title", text[0]));
       box.appendChild(fill("verdict-sub", text[1]));
+      if (res.extra && res.extra.client) {
+        box.appendChild(fill("verdict-client", "Клиент: " + res.extra.client));
+      }
       haptic("error");
     }
 
@@ -774,9 +878,13 @@
 
     api("/api/admin?r=stats&days=" + state.adminDays)
       .then(function (data) {
-        renderTiles(data.summary);
+        state.currency = data.currency || "₸";
+        renderToday(data.today);
+        renderChart(data.daily);
+        renderLiability(data.liability);
+        renderTiles(data.summary, data.previous);
         renderFunnel(data.prizes);
-        renderOutstanding(data.outstanding, data.summary);
+        renderOutstanding(data.outstanding, data.liability);
         renderSources(data.sources);
         renderActivity(data.activity);
       })
@@ -786,30 +894,127 @@
       });
   }
 
-  function renderTiles(s) {
-    if (!s) return;
+  function money(value) {
+    var n = Number(value) || 0;
+    return Math.round(n).toLocaleString("ru-RU") + " " + state.currency;
+  }
 
-    var takeRate = s.prizesWon > 0 ? Math.round((s.redeemed / s.prizesWon) * 100) : 0;
+  function renderToday(t) {
+    if (!t) return;
+    el.todayTiles.innerHTML = "";
+
+    [
+      { value: t.spins,     label: "прокрутов",        cls: "accent" },
+      { value: t.checkins,  label: "визитов по QR",    cls: "" },
+      { value: t.newcomers, label: "новых клиентов",   cls: "" },
+      { value: money(t.spent), label: "выдано призов", cls: "warn" }
+    ].forEach(function (item) {
+      var box = document.createElement("div");
+      box.className = "tile " + item.cls;
+      box.appendChild(fill("tile-value", String(item.value)));
+      box.appendChild(fill("tile-label", item.label));
+      el.todayTiles.appendChild(box);
+    });
+  }
+
+  // Столбики масштабируем от максимума за неделю: абсолютная высота
+  // ничего не сказала бы, а относительная сразу показывает провалы.
+  function renderChart(daily) {
+    el.chart.innerHTML = "";
+    if (!daily || !daily.length) return;
+
+    var peak = daily.reduce(function (m, d) { return Math.max(m, d.spins); }, 0);
+    var today = new Date().toISOString().slice(0, 10);
+
+    daily.forEach(function (d) {
+      var bar = document.createElement("div");
+      bar.className = "bar" + (d.day === today ? " today" : "") + (d.spins === 0 ? " zero" : "");
+
+      bar.appendChild(fill("bar-value", String(d.spins)));
+
+      var fillEl = document.createElement("div");
+      fillEl.className = "bar-fill";
+      fillEl.style.height = (peak > 0 ? Math.max(3, (d.spins / peak) * 100) : 3) + "%";
+      bar.appendChild(fillEl);
+
+      bar.appendChild(fill("bar-day", weekday(d.day)));
+      el.chart.appendChild(bar);
+    });
+  }
+
+  var WEEKDAYS = ["вс", "пн", "вт", "ср", "чт", "пт", "сб"];
+
+  function weekday(iso) {
+    var d = new Date(iso + "T00:00:00");
+    return isNaN(d.getTime()) ? "" : WEEKDAYS[d.getDay()];
+  }
+
+  function renderLiability(l) {
+    if (!l) return;
+    el.liability.innerHTML = "";
+
+    var left = document.createElement("div");
+    left.appendChild(fill("liability-main", String(l.count)));
+    left.appendChild(fill("liability-label", "призов не забрано"));
+
+    el.liability.appendChild(left);
+    el.liability.appendChild(fill("liability-money", money(l.cost)));
+  }
+
+  function renderTiles(cur, prev) {
+    if (!cur) return;
+
+    var takeRate = cur.prizesWon > 0 ? Math.round((cur.redeemed / cur.prizesWon) * 100) : 0;
 
     var tiles = [
-      { value: s.checkins, label: "визитов по QR", cls: "accent" },
-      { value: s.spins, label: "прокрутов", cls: "" },
-      { value: s.prizesWon, label: "призов выиграно", cls: "" },
-      { value: takeRate + "%", label: "призов забрали", cls: takeRate >= 50 ? "accent" : "warn" },
-      { value: s.outstandingAll, label: "кодов на руках прямо сейчас", cls: "warn" },
-      { value: s.uniqueClients, label: "клиентов крутили", cls: "" },
-      { value: s.newClients, label: "новых клиентов", cls: "" },
-      { value: s.totalClients, label: "всего в базе", cls: "" }
+      { value: cur.checkins,      label: "визитов по QR",   cls: "accent", key: "checkins" },
+      { value: cur.spins,         label: "прокрутов",       cls: "",       key: "spins" },
+      { value: money(cur.spent),  label: "выдано призов",   cls: "warn",   key: "spent" },
+      { value: takeRate + "%",    label: "призов забрали",  cls: takeRate >= 50 ? "accent" : "warn" },
+      { value: cur.prizesWon,     label: "призов выиграно", cls: "",       key: "prizesWon" },
+      { value: cur.uniqueClients, label: "клиентов крутили",cls: "",       key: "uniqueClients" },
+      { value: cur.newClients,    label: "новых клиентов",  cls: "",       key: "newClients" },
+      { value: cur.totalClients,  label: "всего в базе",    cls: "" }
     ];
 
     el.statTiles.innerHTML = "";
+
     tiles.forEach(function (t) {
       var box = document.createElement("div");
       box.className = "tile " + t.cls;
       box.appendChild(fill("tile-value", String(t.value)));
       box.appendChild(fill("tile-label", t.label));
+
+      if (t.key && prev) {
+        var d = delta(cur[t.key], prev[t.key]);
+        if (d) box.appendChild(d);
+      }
+
       el.statTiles.appendChild(box);
     });
+  }
+
+  // Сравнение с предыдущим отрезком той же длины: за 7 дней — с прошлой
+  // неделей, за 30 — с прошлым месяцем.
+  function delta(now, before) {
+    var a = Number(now) || 0;
+    var b = Number(before) || 0;
+
+    if (b === 0 && a === 0) return null;
+
+    var node = document.createElement("div");
+    node.className = "tile-delta delta ";
+
+    if (b === 0) {
+      node.className += "up";
+      node.textContent = "↑ новое";
+      return node;
+    }
+
+    var pct = Math.round(((a - b) / b) * 100);
+    node.className += pct > 0 ? "up" : (pct < 0 ? "down" : "flat");
+    node.textContent = (pct > 0 ? "↑ +" : (pct < 0 ? "↓ " : "= ")) + pct + "% к прошлому периоду";
+    return node;
   }
 
   // Воронка приза: выпал -> забрали -> висит на руках -> сгорел.
@@ -820,7 +1025,7 @@
 
     var head = document.createElement("thead");
     var headRow = document.createElement("tr");
-    ["Приз", "Выпал", "Забрали", "На руках", "Сгорел", "%"].forEach(function (label) {
+    ["Приз", "Выпал", "Забрали", "На руках", "Сгорел", "%", "Потрачено"].forEach(function (label) {
       var th = document.createElement("th");
       th.textContent = label;
       headRow.appendChild(th);
@@ -829,13 +1034,14 @@
     table.appendChild(head);
 
     var body = document.createElement("tbody");
-    var totals = { won: 0, redeemed: 0, outstanding: 0, expired: 0 };
+    var totals = { won: 0, redeemed: 0, outstanding: 0, expired: 0, spent: 0 };
 
     (prizes || []).forEach(function (p) {
       totals.won += p.won;
       totals.redeemed += p.redeemed;
       totals.outstanding += p.outstanding;
       totals.expired += p.expired;
+      totals.spent += Number(p.spent) || 0;
 
       var rate = p.won > 0 ? Math.round((p.redeemed / p.won) * 100) : null;
       var tr = document.createElement("tr");
@@ -846,6 +1052,7 @@
       tr.appendChild(cell(p.outstanding, "num out"));
       tr.appendChild(cell(p.expired, "num"));
       tr.appendChild(cell(rate === null ? "—" : rate + "%", "num " + rateClass(rate)));
+      tr.appendChild(cell(money(p.spent), "num"));
 
       body.appendChild(tr);
     });
@@ -856,8 +1063,9 @@
     el.funnelFoot.textContent = totals.won === 0
       ? "За выбранный период призов ещё не выигрывали."
       : "Всего за период: выпало " + totals.won + ", забрали " + totals.redeemed +
-        " (" + overall + "%), сгорело " + totals.expired +
-        ". Низкий процент означает, что призы выигрывают, но за ними не приходят — стоит увеличить срок или заменить приз.";
+        " (" + overall + "%), сгорело " + totals.expired + ", потрачено " + money(totals.spent) +
+        ". Считаем только забранные призы: невыкупленный код денег клубу не стоит. " +
+        "Низкий процент значит, что призы выигрывают, но за ними не приходят — стоит увеличить срок или заменить приз.";
   }
 
   function cell(text, cls) {
@@ -876,7 +1084,7 @@
 
   // Живые невыкупленные коды — это обязательства клуба: столько бонусов
   // клиенты вправе прийти и забрать в любой момент.
-  function renderOutstanding(list, summary) {
+  function renderOutstanding(list, liability) {
     el.outstandingList.innerHTML = "";
 
     if (!list || !list.length) {
@@ -901,7 +1109,7 @@
       el.outstandingList.appendChild(li);
     });
 
-    var total = summary ? summary.outstandingAll : list.length;
+    var total = liability ? liability.count : list.length;
     el.outstandingFoot.textContent = "Всего активных кодов: " + total +
       (list.length < total ? " (показаны ближайшие " + list.length + " по сроку сгорания)" : "") +
       ". Тем, у кого приз сгорает завтра, есть смысл напомнить — это готовый повод для визита.";
@@ -1014,12 +1222,13 @@
       var fDesc  = field("Описание на карточке", input("text", prize.description || ""), true);
       var fShort = field("Короткая подпись", input("text", prize.short_title || ""));
       var fIcon  = field("Иконка", input("text", prize.icon || ""));
-      var fWeight = field("Вес (шанс)", input("number", prize.weight));
+      var fWeight = weightField(prize, total);
+      var fCost = field("Себестоимость, " + state.currency, input("number", prize.cost));
       var fDays  = field("Сгорает через, дней", input("number", prize.expires_in_days));
       var fLimit = field("Лимит в сутки", input("number", prize.daily_limit === null ? "" : prize.daily_limit));
       var fColor = field("Цвет сектора", input("color", prize.color || "#a6ff2f"));
 
-      [fTitle, fDesc, fShort, fIcon, fWeight, fDays, fLimit, fColor].forEach(function (f) { grid.appendChild(f.wrap); });
+      [fTitle, fDesc, fShort, fIcon, fWeight, fCost, fDays, fLimit, fColor].forEach(function (f) { grid.appendChild(f.wrap); });
       box.appendChild(grid);
 
       var save = document.createElement("button");
@@ -1041,6 +1250,7 @@
           short_title: fShort.input.value || null,
           icon: fIcon.input.value || null,
           weight: Number(fWeight.input.value),
+          cost: Number(fCost.input.value),
           expires_in_days: Number(fDays.input.value),
           daily_limit: fLimit.input.value === "" ? null : Number(fLimit.input.value),
           color: fColor.input.value,
@@ -1070,6 +1280,38 @@
 
       el.prizeEditor.appendChild(box);
     });
+  }
+
+  // Ползунок вместо голого числа: владелец правит вероятность на ощупь
+  // и сразу видит, во сколько процентов это превращается.
+  function weightField(prize, total) {
+    var wrap = document.createElement("div");
+    wrap.className = "field wide";
+
+    var label = document.createElement("label");
+    wrap.appendChild(label);
+
+    var slider = document.createElement("input");
+    slider.type = "range";
+    slider.min = 0;
+    slider.max = 100;
+    slider.value = prize.weight;
+    slider.className = "slider";
+    wrap.appendChild(slider);
+
+    function refresh() {
+      var w = Number(slider.value);
+      // Пересчитываем от суммы без этого приза, иначе процент врёт
+      // при перетаскивании.
+      var rest = total - (prize.enabled ? prize.weight : 0);
+      var pct = w + rest > 0 ? Math.round((w / (w + rest)) * 100) : 0;
+      label.textContent = "Вес: " + w + "  —  шанс около " + pct + "%";
+    }
+
+    slider.addEventListener("input", refresh);
+    refresh();
+
+    return { wrap: wrap, input: slider };
   }
 
   function field(label, inputNode, wide) {
@@ -1122,16 +1364,24 @@
     var query = el.clientSearch.value.trim().toLowerCase();
 
     var shown = clients.filter(function (c) {
+      if (state.clientSort === "blocked" && !c.blocked) return false;
       if (!query) return true;
       return String(c.id).indexOf(query) !== -1 ||
              (c.first_name || "").toLowerCase().indexOf(query) !== -1 ||
-             (c.username || "").toLowerCase().indexOf(query) !== -1;
+             (c.username || "").toLowerCase().indexOf(query) !== -1 ||
+             (c.phone || "").indexOf(query) !== -1;
     });
+
+    // Сервер отдаёт список от свежих к старым; для ретеншена нужен
+    // обратный порядок — кто пропал дольше всех.
+    if (state.clientSort === "lost") {
+      shown = shown.slice().reverse();
+    }
 
     el.clientsList.innerHTML = "";
 
     if (!shown.length) {
-      el.clientsList.appendChild(fill("skeleton", query ? "Никого не нашлось" : "В базе пока никого"));
+      el.clientsList.appendChild(fill("skeleton", query ? "Никого не нашлось" : "Пусто"));
       return;
     }
 
@@ -1140,11 +1390,19 @@
 
   function clientCard(c) {
     var li = document.createElement("li");
-    li.className = "card";
+    li.className = "card" + (c.blocked ? " blocked" : "");
 
-    var name = c.first_name || (c.username ? "@" + c.username : "ID " + c.id);
-    var sub = ago(c.last_seen) + " · визитов: " + (c.visits_total || 0) +
-              " · выиграл: " + c.won + " · забрал: " + c.redeemed;
+    var nameNode = document.createElement("span");
+    nameNode.textContent = c.first_name || (c.username ? "@" + c.username : "ID " + c.id);
+
+    var title = document.createElement("span");
+    title.appendChild(nameNode);
+    if (c.blocked) title.appendChild(span("badge", "заблокирован"));
+
+    var parts = [ago(c.last_seen), "визитов: " + (c.visits_total || 0),
+                 "выиграл: " + c.won, "забрал: " + c.redeemed];
+    if (c.holding) parts.push("на руках: " + c.holding);
+    if (c.phone) parts.push(c.phone);
 
     var side = document.createElement("div");
     side.className = "client-side";
@@ -1172,7 +1430,35 @@
         .then(function () { give.disabled = false; });
     });
 
-    li.appendChild(row("👤", name, sub, side));
+    var wrap = row("👤", "", null, side);
+    // Заголовок собираем узлами: там значок блокировки рядом с именем.
+    var titleSlot = wrap.querySelector(".card-title");
+    titleSlot.textContent = "";
+    titleSlot.appendChild(title);
+    wrap.querySelector(".card-main").appendChild(fill("card-sub", parts.join(" · ")));
+
+    li.appendChild(wrap);
+
+    var ban = document.createElement("button");
+    ban.className = "btn " + (c.blocked ? "ghost" : "danger");
+    ban.type = "button";
+    ban.textContent = c.blocked ? "Разблокировать" : "Заблокировать";
+    ban.style.marginTop = "9px";
+    ban.style.width = "100%";
+
+    ban.addEventListener("click", function () {
+      ban.disabled = true;
+      api("/api/admin?r=block", { method: "POST", body: { userId: c.id, blocked: !c.blocked } })
+        .then(function () {
+          c.blocked = !c.blocked;
+          toast(c.blocked ? "Клиент заблокирован" : "Клиент разблокирован");
+          haptic("success");
+          renderClients();
+        })
+        .catch(function (err) { toast("Ошибка: " + err.message, true); ban.disabled = false; });
+    });
+
+    li.appendChild(ban);
     return li;
   }
 
@@ -1200,6 +1486,93 @@
     renderSettings();
     renderStaffForm();
     loadStaff();
+    loadConfigLog();
+  }
+
+  // Файл уходит сообщением в чат бота: мини-апп внутри Telegram не может
+  // сохранить файл на устройство, а документ из чата открывается в Excel
+  // одним нажатием и никуда не денется.
+  function bindExport() {
+    el.exportNav.addEventListener("click", function (e) {
+      var btn = e.target.closest(".seg");
+      if (!btn) return;
+      state.exportDays = Number(btn.dataset.days);
+      markActive(el.exportNav, btn);
+    });
+
+    el.exportBtn.addEventListener("click", function () {
+      el.exportBtn.disabled = true;
+      el.exportBtn.textContent = "Готовим файл...";
+
+      api("/api/admin?r=export&days=" + state.exportDays, { method: "POST" })
+        .then(function (res) {
+          if (res.reason === "empty") {
+            toast("За этот период призов не было", true);
+          } else if (res.ok) {
+            toast("Файл отправлен в чат с ботом · строк: " + res.rows);
+            haptic("success");
+          } else {
+            toast("Не удалось отправить файл", true);
+          }
+        })
+        .catch(function (err) { toast("Ошибка: " + err.message, true); })
+        .then(function () {
+          el.exportBtn.disabled = false;
+          el.exportBtn.textContent = "Выгрузить в CSV";
+        });
+    });
+  }
+
+  var FIELD_NAMES = {
+    title: "название", description: "описание", short_title: "подпись",
+    icon: "иконка", weight: "вес", cost: "себестоимость",
+    expires_in_days: "срок", daily_limit: "лимит в сутки", color: "цвет",
+    enabled: "включён", sort_order: "порядок", club_name: "название клуба",
+    spin_cooldown_hours: "кулдаун", max_unused_prizes: "кап призов",
+    checkin_enabled: "начисление по QR", blocked: "блокировка"
+  };
+
+  function loadConfigLog() {
+    el.configLog.innerHTML = '<p class="skeleton">Загружаем...</p>';
+
+    api("/api/admin?r=log")
+      .then(function (data) {
+        var items = data.log || [];
+        el.configLog.innerHTML = "";
+
+        if (!items.length) {
+          el.configLog.appendChild(fill("skeleton", "Настройки пока не меняли"));
+          return;
+        }
+
+        items.forEach(function (entry) {
+          var li = document.createElement("li");
+          li.className = "card";
+          li.appendChild(row("✏️", describeEntity(entry), describeChanges(entry.changes), ago(entry.created_at)));
+          el.configLog.appendChild(li);
+        });
+      })
+      .catch(function (err) {
+        el.configLog.innerHTML = "";
+        el.configLog.appendChild(fill("skeleton", "Не удалось загрузить: " + err.message));
+      });
+  }
+
+  function describeEntity(entry) {
+    if (entry.entity === "settings") return entry.actor + " — настройки клуба";
+    if (entry.entity === "client") return entry.actor + " — клиент " + entry.entity_key;
+    return entry.actor + " — приз " + entry.entity_key;
+  }
+
+  function describeChanges(changes) {
+    if (!changes) return "";
+    return Object.keys(changes).map(function (field) {
+      var c = changes[field];
+      var name = FIELD_NAMES[field] || field;
+      return c.from === undefined || c.from === null || c.from === ""
+        ? name + " → " + c.to
+        : name + ": " + c.from + " → " + c.to;
+    }).join(" · ");
   }
 
   function renderSettings() {

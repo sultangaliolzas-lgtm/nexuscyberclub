@@ -26,6 +26,14 @@ module.exports = async function handler(req, res) {
     const update = req.body;
     const message = update && update.message;
 
+    // Клиент поделился номером. Telegram не отдаёт телефон в initData,
+    // это единственный законный способ его получить.
+    if (message && message.contact) {
+      await saveContact(message);
+      res.status(200).send("ok");
+      return;
+    }
+
     if (message && typeof message.text === "string") {
       const chatId = message.chat.id;
       const fromId = message.from.id;
@@ -41,6 +49,9 @@ module.exports = async function handler(req, res) {
 
       if (text === "/start" || text.startsWith("/start ")) {
         await sendStart(chatId, message.from.first_name || "", role);
+
+        const existing = await db.getUser(fromId);
+        if (!existing || !existing.phone) await askPhone(chatId);
       } else if (text === "/id") {
         await sendId(chatId, message.from);
       } else if (text === "/help") {
@@ -142,6 +153,47 @@ async function redeemCode(chatId, code, staffId) {
     console.error("redeemCode error:", err);
     await sendMessage(chatId, "Ошибка при погашении кода.");
   }
+}
+
+// Контактом можно поделиться и чужим, поэтому принимаем только свой:
+// user_id в контакте должен совпасть с отправителем.
+async function saveContact(message) {
+  const contact = message.contact;
+
+  if (!contact.user_id || contact.user_id !== message.from.id) {
+    await sendMessage(message.chat.id, "Нужен ваш собственный номер — нажмите кнопку под полем ввода.");
+    return;
+  }
+
+  try {
+    await db.upsertUser({
+      id: message.from.id,
+      username: message.from.username || null,
+      first_name: message.from.first_name || null,
+      phone: contact.phone_number,
+      phone_at: new Date().toISOString()
+    });
+
+    await sendMessage(
+      message.chat.id,
+      "Спасибо! Номер сохранён — теперь сотрудник найдёт вас на стойке, даже если вы забудете телефон дома.",
+      { remove_keyboard: true }
+    );
+  } catch (err) {
+    console.error("saveContact error:", err);
+  }
+}
+
+async function askPhone(chatId) {
+  await sendMessage(
+    chatId,
+    "Ещё пара секунд: поделитесь номером телефона, чтобы сотрудник мог найти вас на стойке и вернуть приз, если что-то пойдёт не так. Это по желанию.",
+    {
+      keyboard: [[{ text: "📱 Поделиться номером", request_contact: true }]],
+      resize_keyboard: true,
+      one_time_keyboard: true
+    }
+  );
 }
 
 async function sendStart(chatId, firstName, role) {

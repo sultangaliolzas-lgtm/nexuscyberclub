@@ -97,12 +97,13 @@
           <input id="deskCode" type="text" placeholder="NX-1A2B3C4D" maxlength="11"
                  autocomplete="off" autocapitalize="characters" spellcheck="false">
         </div>
-        <button class="btn" id="deskSubmit" type="button">Погасить</button>
+        <button class="btn ghost" id="deskScan" type="button" hidden>Сканировать QR клиента</button>
+        <button class="btn" id="deskSubmit" type="button">Проверить код</button>
       </div>
 
       <div id="deskResult"></div>
 
-      <p class="foot">Сверять код глазами не нужно. Сервер сам проверит, не использован ли он, не истёк ли и чей он, и сразу пометит погашенным — второй раз тот же код не сработает.</p>
+      <p class="foot" id="deskHint">Сверять код глазами не нужно. Сервер сам проверит, не использован ли он, не истёк ли и чей он, и сразу пометит погашенным — второй раз тот же код не сработает.</p>
 
       <h2 class="section-title">Погашено в этой сессии</h2>
       <ul class="cards compact" id="deskLog"></ul>
@@ -121,6 +122,18 @@
 
       <!-- отчёт -->
       <div class="pane" id="pane-stats">
+
+        <h2 class="section-title">Сегодня</h2>
+        <div class="tiles" id="todayTiles"></div>
+
+        <h2 class="section-title">Прокруты за 7 дней</h2>
+        <div class="chart" id="chart"></div>
+
+        <h2 class="section-title">Обязательства клуба</h2>
+        <div class="liability" id="liability"></div>
+        <p class="foot">Столько призов клиенты уже выиграли, но ещё не забрали. Это деньги, которые клуб должен отдать, когда за ними придут.</p>
+
+        <h2 class="section-title">За период</h2>
         <div class="segmented small" id="periodNav">
           <button class="seg" data-days="1" type="button">Сутки</button>
           <button class="seg active" data-days="7" type="button">Неделя</button>
@@ -154,8 +167,13 @@
 
       <!-- клиенты -->
       <div class="pane" id="pane-clients" hidden>
+        <div class="segmented small" id="clientSort">
+          <button class="seg active" data-sort="recent" type="button">Недавние</button>
+          <button class="seg" data-sort="lost" type="button">Давно не был</button>
+          <button class="seg" data-sort="blocked" type="button">Заблокированные</button>
+        </div>
         <div class="tools">
-          <input id="clientSearch" type="search" placeholder="Поиск: имя, @юзернейм или ID" autocomplete="off">
+          <input id="clientSearch" type="search" placeholder="Поиск: имя, @юзернейм, телефон или ID" autocomplete="off">
           <label class="amount">по <input id="grantAmount" type="number" value="1" min="1" max="20"> шт.</label>
         </div>
         <p class="foot" id="clientsFoot">Сверху те, кто был недавно.</p>
@@ -164,6 +182,15 @@
 
       <!-- клуб: настройки, персонал, QR -->
       <div class="pane" id="pane-team" hidden>
+        <h2 class="section-title">Финансовый отчёт</h2>
+        <div class="segmented small" id="exportNav">
+          <button class="seg" data-days="7" type="button">7 дней</button>
+          <button class="seg active" data-days="30" type="button">30 дней</button>
+          <button class="seg" data-days="90" type="button">90 дней</button>
+        </div>
+        <button class="btn" id="exportBtn" type="button">Выгрузить в CSV</button>
+        <p class="foot">Файл придёт сообщением в этот же чат с ботом — оттуда он открывается в Excel одним нажатием. Мини-апп внутри Telegram сохранять файлы на устройство не умеет, поэтому так.</p>
+
         <h2 class="section-title">Быстрое начисление</h2>
         <button class="btn ghost" id="selfGrant" type="button">Начислить себе прокрут</button>
         <p class="foot">Чтобы проверить рулетку, не сканируя QR. Клиентам прокруты начисляются во вкладке «Клиенты».</p>
@@ -174,6 +201,9 @@
         <h2 class="section-title">QR-наклейки</h2>
         <p class="foot">Страница для печати наклеек с QR-кодом. Открывается в браузере.</p>
         <a class="link-btn" id="qrLink" href="/qr" target="_blank" rel="noopener">Открыть страницу печати</a>
+
+        <h2 class="section-title">История изменений</h2>
+        <ul class="cards compact" id="configLog"></ul>
 
         <h2 class="section-title">Персонал</h2>
         <div class="form" id="staffForm"></div>

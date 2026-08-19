@@ -13,7 +13,10 @@ const ROUTES = {
   clients:  { methods: ["GET"],                     handler: clients },
   staff:    { methods: ["GET", "POST", "DELETE"],   handler: staff },
   settings: { methods: ["GET", "PATCH"],            handler: settings },
-  grant:    { methods: ["POST"],                    handler: grant }
+  grant:    { methods: ["POST"],                    handler: grant },
+  block:    { methods: ["POST"],                    handler: block },
+  log:      { methods: ["GET"],                     handler: log },
+  export:   { methods: ["POST"],                    handler: exportCsv }
 };
 
 module.exports = async function handler(req, res) {
@@ -71,6 +74,7 @@ const EDITABLE = {
   icon: (v) => (v === null ? null : String(v).slice(0, 8)),
   tier: (v) => (v === null ? null : String(v).slice(0, 16)),
   weight: (v) => clampInt(v, 0, 1000),
+  cost: (v) => clampMoney(v),
   expires_in_days: (v) => clampInt(v, 0, 365),
   color: (v) => (/^#[0-9a-fA-F]{6}$/.test(String(v)) ? String(v) : "#a6ff2f"),
   daily_limit: (v) => (v === null || v === "" ? null : clampInt(v, 0, 10000)),
@@ -78,7 +82,7 @@ const EDITABLE = {
   sort_order: (v) => clampInt(v, 0, 999)
 };
 
-async function prizes(req, res) {
+async function prizes(req, res, auth) {
   if (req.method === "GET") {
     res.status(200).json({ prizes: await db.getPrizes(false) });
     return;
@@ -102,13 +106,50 @@ async function prizes(req, res) {
     return;
   }
 
+  // Прежние значения нужны для истории изменений: владельцу важно
+  // видеть не только что поменяли, но и с чего.
+  const before = (await db.getPrizes(false)).filter((p) => p.key === body.key)[0];
+
   const updated = await db.updatePrize(body.key, patch);
   if (!updated) {
     res.status(404).json({ error: "prize_not_found" });
     return;
   }
 
+  await logChanges(auth.user.id, "prize", body.key, before, patch);
   res.status(200).json({ prize: updated });
+}
+
+// Пишем только то, что действительно изменилось: иначе журнал забьётся
+// записями от нажатия "Сохранить" без правок.
+async function logChanges(actorId, entity, key, before, patch) {
+  const changes = {};
+
+  Object.keys(patch).forEach((field) => {
+    const was = before ? before[field] : null;
+    if (String(was) !== String(patch[field])) {
+      changes[field] = { from: was, to: patch[field] };
+    }
+  });
+
+  if (Object.keys(changes).length === 0) return;
+
+  try {
+    await db.request("config_log", {
+      method: "POST",
+      headers: { Prefer: "return=minimal" },
+      body: JSON.stringify([{ actor_id: actorId, entity: entity, entity_key: key, changes: changes }])
+    });
+  } catch (err) {
+    // Журнал не должен ронять сохранение настройки.
+    console.error("config_log error:", err);
+  }
+}
+
+function clampMoney(v) {
+  const n = Number(v);
+  if (!isFinite(n) || n < 0) return 0;
+  return Math.min(1000000, Math.round(n * 100) / 100);
 }
 
 function clampInt(v, min, max) {
@@ -160,7 +201,7 @@ async function staff(req, res, auth) {
 
 /* ---------------------------------------------------------- настройки */
 
-async function settings(req, res) {
+async function settings(req, res, auth) {
   if (req.method === "GET") {
     res.status(200).json({ settings: await db.getSettings() });
     return;
@@ -187,7 +228,11 @@ async function settings(req, res) {
     return;
   }
 
-  res.status(200).json({ settings: await db.updateSettings(patch) });
+  const before = await db.getSettings();
+  const updated = await db.updateSettings(patch);
+  await logChanges(auth.user.id, "settings", "club", before, patch);
+
+  res.status(200).json({ settings: updated });
 }
 
 /* ---------------------------------------------------------- начисление */
@@ -219,4 +264,113 @@ async function grant(req, res, auth) {
   });
 
   res.status(200).json({ ok: true, spinsAvailable: left, granted: amount });
+}
+
+/* ---------------------------------------------------------- блокировка */
+
+// Заблокированный клиент не крутит и не получает чек-ины. Проверка живёт
+// в SQL, поэтому её нельзя обойти, обратившись к API мимо приложения.
+async function block(req, res, auth) {
+  const body = req.body || {};
+  const userId = Number(body.userId);
+
+  if (!userId || !isFinite(userId)) {
+    res.status(400).json({ error: "bad_user_id" });
+    return;
+  }
+
+  if (userId === Number(auth.user.id)) {
+    res.status(400).json({ error: "cannot_block_self" });
+    return;
+  }
+
+  const result = await db.rpc("set_blocked", {
+    p_user_id: userId,
+    p_actor_id: auth.user.id,
+    p_blocked: Boolean(body.blocked),
+    p_reason: body.reason ? String(body.reason).slice(0, 120) : null
+  });
+
+  res.status(200).json(result);
+}
+
+/* ---------------------------------------------------------- история настроек */
+
+async function log(req, res) {
+  res.status(200).json({ log: (await db.rpc("admin_config_log", { p_limit: 60 })) || [] });
+}
+
+/* ---------------------------------------------------------- выгрузка */
+
+const EXPORT_COLUMNS = [
+  ["won_at",      "Дата выигрыша"],
+  ["title",       "Приз"],
+  ["tier",        "Редкость"],
+  ["cost",        "Себестоимость"],
+  ["состояние",   "Состояние"],
+  ["redeemed_at", "Дата выдачи"],
+  ["expires_at",  "Сгорает"],
+  ["code",        "Код"],
+  ["client_id",   "ID клиента"],
+  ["first_name",  "Имя"],
+  ["username",    "Юзернейм"],
+  ["phone",       "Телефон"]
+];
+
+// Файл уходит в чат бота, а не отдаётся ссылкой: мини-апп внутри
+// Telegram не может сохранить файл на устройство, а присланный ботом
+// документ открывается в Excel одним нажатием и остаётся в переписке.
+async function exportCsv(req, res, auth) {
+  const days = clampInt((req.query && req.query.days) || 30, 1, 365);
+  const rows = (await db.rpc("admin_export", { p_days: days })) || [];
+
+  if (!rows.length) {
+    res.status(200).json({ ok: false, reason: "empty" });
+    return;
+  }
+
+  const csv = toCsv(rows);
+  const name = "nexus-" + days + "d-" + new Date().toISOString().slice(0, 10) + ".csv";
+  const sent = await sendDocument(auth.user.id, name, csv, "Отчёт по призам за " + days + " дн. Строк: " + rows.length);
+
+  res.status(200).json({ ok: sent, rows: rows.length, sent: sent });
+}
+
+function toCsv(rows) {
+  const lines = [EXPORT_COLUMNS.map((c) => c[1]).join(";")];
+
+  rows.forEach((row) => {
+    lines.push(EXPORT_COLUMNS.map((c) => cell(row[c[0]])).join(";"));
+  });
+
+  // BOM обязателен: без него Excel читает файл в своей кодировке
+  // и вместо кириллицы показывает мусор.
+  return "﻿" + lines.join("\r\n");
+}
+
+function cell(value) {
+  if (value === null || value === undefined) return "";
+  const text = String(value).replace(/"/g, '""');
+  return /[";\r\n]/.test(text) ? '"' + text + '"' : text;
+}
+
+async function sendDocument(chatId, filename, content, caption) {
+  const token = process.env.BOT_TOKEN;
+  if (!token) return false;
+
+  const form = new FormData();
+  form.append("chat_id", String(chatId));
+  form.append("caption", caption);
+  form.append("document", new Blob([content], { type: "text/csv" }), filename);
+
+  const resp = await fetch("https://api.telegram.org/bot" + token + "/sendDocument", {
+    method: "POST",
+    body: form
+  });
+
+  if (!resp.ok) {
+    console.error("sendDocument failed:", await resp.text());
+    return false;
+  }
+  return true;
 }
