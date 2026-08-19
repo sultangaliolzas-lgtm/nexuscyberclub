@@ -1,12 +1,8 @@
 const db = require("../lib/db");
+const { roleOf } = require("../lib/guard");
 
 const BOT_TOKEN = process.env.BOT_TOKEN;
 const WEBAPP_URL = process.env.WEBAPP_URL;
-const STAFF_IDS = (process.env.STAFF_IDS || "")
-  .split(",")
-  .map((s) => s.trim())
-  .filter(Boolean)
-  .map(Number);
 
 const TELEGRAM_API = "https://api.telegram.org/bot" + BOT_TOKEN;
 
@@ -41,65 +37,70 @@ module.exports = async function handler(req, res) {
         first_name: message.from.first_name || null
       });
 
-      if (text === "/start") {
-        await sendStart(chatId, message.from.first_name || "");
-        res.status(200).send("ok");
-        return;
-      }
+      const role = await roleOf(fromId);
 
-      if (text === "/id") {
-        await sendMessage(chatId, "Твой ID: " + fromId + (message.from.username ? "\nЮзернейм: @" + message.from.username : "") + "\n\nПокажи его сотруднику клуба, чтобы получить прокрут рулетки.");
-        res.status(200).send("ok");
-        return;
-      }
-
-      if (STAFF_IDS.includes(fromId)) {
-        const handled = await handleStaffMessage(chatId, fromId, text);
-        if (handled) {
-          res.status(200).send("ok");
-          return;
-        }
+      if (text === "/start" || text.startsWith("/start ")) {
+        await sendStart(chatId, message.from.first_name || "", role);
+      } else if (text === "/id") {
+        await sendId(chatId, message.from);
+      } else if (text === "/help") {
+        await sendHelp(chatId, role);
+      } else if (role !== "client") {
+        await handleStaffMessage(chatId, fromId, text, role);
       }
     }
   } catch (err) {
     console.error("Webhook error:", err);
   }
 
+  // Telegram повторяет доставку на любой ответ кроме 200, поэтому
+  // отвечаем успехом даже на своей ошибке — иначе апдейт зациклится.
   res.status(200).send("ok");
 };
 
-async function handleStaffMessage(chatId, staffId, text) {
+async function handleStaffMessage(chatId, staffId, text, role) {
   if (CODE_PATTERN.test(text)) {
-    await redeemCode(chatId, text.toUpperCase(), staffId);
-    return true;
+    await redeemCode(chatId, text, staffId);
+    return;
   }
 
   if (ID_PATTERN.test(text)) {
-    await grantSpin(chatId, Number(text));
-    return true;
+    await grantSpin(chatId, Number(text), staffId);
+    return;
   }
 
   if (USERNAME_PATTERN.test(text)) {
     const userId = await db.resolveUserIdByUsername(text);
     if (!userId) {
-      await sendMessage(chatId, "Не нашёл клиента с юзернеймом " + text + ". Он должен хотя бы раз нажать /start в этом боте, либо используйте числовой ID (команда /id у клиента).");
-      return true;
+      await sendMessage(
+        chatId,
+        "Не нашёл клиента с юзернеймом " + text + ".\n" +
+          "Он должен хотя бы раз нажать /start в этом боте — либо используйте числовой ID (команда /id у клиента)."
+      );
+      return;
     }
-    await grantSpin(chatId, userId);
-    return true;
+    await grantSpin(chatId, userId, staffId);
+    return;
   }
 
-  return false;
+  await sendHelp(chatId, role);
 }
 
-async function grantSpin(chatId, userId) {
+async function grantSpin(chatId, userId, staffId) {
   try {
-    let user = await db.getUser(userId);
-    if (!user) {
+    const existing = await db.getUser(userId);
+    if (!existing) {
       await db.upsertUser({ id: userId, visits_available: 0 });
     }
-    const next = await db.incrementVisits(userId, 1);
-    await sendMessage(chatId, "Готово. Клиенту " + userId + " начислен прокрут. Доступно прокрутов: " + next);
+
+    const left = await db.rpc("do_grant", { p_user_id: userId, p_staff_id: staffId, p_amount: 1 });
+
+    if (left === -1 || left === null) {
+      await sendMessage(chatId, "Не получилось начислить прокрут. Проверьте ID.");
+      return;
+    }
+
+    await sendMessage(chatId, "Готово. Клиенту " + userId + " начислен прокрут.\nДоступно прокрутов: " + left);
   } catch (err) {
     console.error("grantSpin error:", err);
     await sendMessage(chatId, "Не получилось начислить прокрут. Проверьте ID.");
@@ -108,37 +109,81 @@ async function grantSpin(chatId, userId) {
 
 async function redeemCode(chatId, code, staffId) {
   try {
-    const item = await db.getInventoryByCode(code);
-    if (!item) {
-      await sendMessage(chatId, "Код " + code + " не найден.");
+    const result = await db.rpc("do_redeem", { p_code: code.toUpperCase(), p_staff_id: staffId });
+
+    if (result && result.ok) {
+      await sendMessage(
+        chatId,
+        "✅ " + result.title + " (" + result.tier + ")\n\n" +
+          "Код погашен. Выдайте приз клиенту."
+      );
       return;
     }
-    if (item.status === "redeemed") {
-      await sendMessage(chatId, "Код " + code + " уже был погашен ранее (" + item.redeemed_at + ").");
-      return;
+
+    const reason = result && result.reason;
+
+    if (reason === "already_redeemed") {
+      await sendMessage(chatId, "⚠️ Код " + code.toUpperCase() + " уже был погашен: " + formatDate(result.redeemedAt) + ".");
+    } else if (reason === "expired") {
+      await sendMessage(chatId, "⚠️ Срок действия кода " + code.toUpperCase() + " истёк " + formatDate(result.expiresAt) + ".");
+    } else {
+      await sendMessage(chatId, "❌ Код " + code.toUpperCase() + " не найден.");
     }
-    if (new Date(item.expires_at).getTime() < Date.now()) {
-      await sendMessage(chatId, "Срок действия кода " + code + " истёк.");
-      return;
-    }
-    await db.redeemInventory(item.id, staffId);
-    await sendMessage(chatId, "Приз: " + item.title + " (" + item.tier + ")\nКод погашен. Внесите бонус клиенту в систему часов вручную.");
   } catch (err) {
     console.error("redeemCode error:", err);
     await sendMessage(chatId, "Ошибка при погашении кода.");
   }
 }
 
-async function sendStart(chatId, firstName) {
-  const text =
+async function sendStart(chatId, firstName, role) {
+  let text =
     "Привет" + (firstName ? ", " + firstName : "") + "!\n\n" +
-    "Это рулетка компьютерного клуба Nexus.\n" +
-    "Купи часы игры в клубе — получишь прокрут рулетки на следующий визит.\n" +
-    "Шанс выиграть доп. время, скидку, снек, напиток или VIP-апгрейд.";
+    "Это рулетка компьютерного клуба Nexus.\n\n" +
+    "Отсканируй QR-код на ресепшене — прокрут откроется сам, сразу в приложении.\n" +
+    "Выигрывай доп. время, скидки, снеки, напитки и VIP-места.\n\n" +
+    "Призы забираются на стойке клуба: покажи код сотруднику.";
+
+  if (role !== "client") {
+    text += "\n\n———\nВы вошли как " + (role === "owner" ? "владелец" : "сотрудник") + ". Команды: /help";
+  }
 
   await sendMessage(chatId, text, {
     inline_keyboard: [[{ text: "🎰 Открыть рулетку", web_app: { url: WEBAPP_URL } }]]
   });
+}
+
+async function sendId(chatId, from) {
+  await sendMessage(
+    chatId,
+    "Твой ID: " + from.id +
+      (from.username ? "\nЮзернейм: @" + from.username : "") +
+      "\n\nОбычно он не нужен — прокрут начисляется по QR-коду на ресепшене. " +
+      "Пригодится, только если что-то пошло не так и сотрудник начисляет прокрут вручную."
+  );
+}
+
+async function sendHelp(chatId, role) {
+  if (role === "client") {
+    await sendMessage(chatId, "Отсканируй QR-код на ресепшене клуба — рулетка откроется сама.\n\n/id — твой номер, если сотрудник попросит.");
+    return;
+  }
+
+  await sendMessage(
+    chatId,
+    "Команды сотрудника:\n\n" +
+      "• Пришлите код вида NX-1A2B3C4D — приз будет погашен.\n" +
+      "• Пришлите числовой ID клиента — начислится один прокрут.\n" +
+      "• Пришлите @юзернейм клиента — то же самое.\n\n" +
+      (role === "owner"
+        ? "Статистика, редактор призов и база клиентов — во вкладке «Админ» внутри приложения."
+        : "")
+  );
+}
+
+function formatDate(iso) {
+  if (!iso) return "";
+  const d = new Date(iso);
+  return d.toLocaleString("ru-RU", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
 }
 
 async function sendMessage(chatId, text, replyMarkup) {

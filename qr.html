@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Nexus — QR для печати</title>
+<style>
+  :root { --ink: #0e0f13; --accent: #7a9e1f; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 24px 16px;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+    background: #f2f3f5; color: var(--ink);
+  }
+  .bar {
+    max-width: 720px; margin: 0 auto 24px; display: flex; flex-wrap: wrap;
+    gap: 10px; align-items: center; background: #fff; padding: 16px;
+    border-radius: 14px; border: 1px solid #dfe1e6;
+  }
+  .bar label { font-size: 13px; font-weight: 700; }
+  .bar input {
+    flex: 1; min-width: 140px; padding: 10px 12px; font-size: 15px;
+    border: 1px solid #cfd2d8; border-radius: 10px;
+  }
+  .bar button {
+    padding: 10px 18px; font-size: 15px; font-weight: 700; cursor: pointer;
+    border: none; border-radius: 10px; background: var(--ink); color: #fff;
+  }
+  .bar p { flex-basis: 100%; margin: 0; font-size: 12px; color: #6b7280; }
+
+  .sticker {
+    max-width: 420px; margin: 0 auto; background: #fff; border-radius: 20px;
+    border: 2px solid var(--ink); padding: 28px 24px 22px; text-align: center;
+  }
+  .sticker h1 { margin: 0 0 2px; font-size: 30px; letter-spacing: 2px; }
+  .sticker .tag { font-size: 12px; letter-spacing: 2px; text-transform: uppercase; color: #6b7280; }
+  .qr { margin: 20px auto 16px; width: 240px; height: 240px; }
+  .qr svg { width: 100%; height: 100%; display: block; }
+  .sticker h2 { margin: 0 0 6px; font-size: 20px; }
+  .sticker p { margin: 0; font-size: 14px; color: #4b5563; line-height: 1.45; }
+  .steps { margin: 16px 0 0; padding: 0; list-style: none; text-align: left; font-size: 13px; color: #374151; }
+  .steps li { padding: 4px 0 4px 22px; position: relative; }
+  .steps li::before { content: "→"; position: absolute; left: 4px; color: var(--accent); font-weight: 700; }
+  .place { margin-top: 14px; font-size: 11px; color: #9ca3af; letter-spacing: 1px; text-transform: uppercase; }
+  .err { color: #b91c1c; font-size: 14px; }
+
+  @media print {
+    body { background: #fff; padding: 0; }
+    .bar { display: none; }
+    .sticker { border-width: 1px; max-width: none; margin: 0; }
+  }
+</style>
+</head>
+<body>
+
+<div class="bar">
+  <label for="source">Метка точки</label>
+  <input id="source" value="r1" maxlength="32" placeholder="r1">
+  <button id="reload" type="button">Обновить</button>
+  <button id="print" type="button">Печать</button>
+  <p>Метка попадает в статистику: сделайте разные наклейки для ресепшена (<b>r1</b>), столов (<b>tables</b>) и листовок (<b>flyer</b>) — в кабинете будет видно, какая из них реально приводит людей.</p>
+</div>
+
+<div class="sticker">
+  <h1>NEXUS</h1>
+  <span class="tag">Компьютерный клуб</span>
+
+  <div class="qr" id="qr"></div>
+
+  <h2>Крути рулетку</h2>
+  <p>Выигрывай игровое время, скидки, снеки и напитки</p>
+
+  <ul class="steps">
+    <li>Наведи камеру телефона на код</li>
+    <li>Откроется Telegram, а в нём — рулетка</li>
+    <li>Прокрут уже начислен, крути сразу</li>
+  </ul>
+
+  <div class="place" id="place">точка: r1</div>
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  var qrBox = document.getElementById("qr");
+  var sourceInput = document.getElementById("source");
+  var place = document.getElementById("place");
+
+  document.getElementById("reload").addEventListener("click", load);
+  document.getElementById("print").addEventListener("click", function () { window.print(); });
+  sourceInput.addEventListener("keydown", function (e) { if (e.key === "Enter") load(); });
+
+  load();
+
+  function load() {
+    var source = (sourceInput.value || "r1").replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 32) || "r1";
+    sourceInput.value = source;
+    place.textContent = "точка: " + source;
+    qrBox.innerHTML = "";
+
+    fetch("/api/qr?source=" + encodeURIComponent(source))
+      .then(function (r) {
+        if (!r.ok) throw new Error("HTTP " + r.status);
+        return r.text();
+      })
+      .then(function (svg) { qrBox.innerHTML = svg; })
+      .catch(function (err) {
+        qrBox.innerHTML = '<p class="err">Не удалось получить QR: ' + err.message + "</p>";
+      });
+  }
+})();
+</script>
+
+</body>
+</html>

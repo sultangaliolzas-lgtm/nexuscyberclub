@@ -9,41 +9,138 @@
 </head>
 <body>
   <div class="app">
+
     <header class="header">
-      <h1>NEXUS</h1>
-      <span class="subtitle">Бесплатная рулетка</span>
+      <div class="brand">
+        <h1 id="clubName">NEXUS</h1>
+        <span class="tagline">Рулетка клуба</span>
+      </div>
+      <div class="spins" id="spins">
+        <span class="spins-count" id="spinsCount">—</span>
+        <span class="spins-label">прокрутов</span>
+      </div>
     </header>
 
-    <section id="rouletteView" class="view">
-      <div class="wheel-wrap">
-        <div class="wheel" id="wheel">
-          <div class="wheel-icon" id="wheelIcon">🎰</div>
+    <!-- ============================ РУЛЕТКА ============================ -->
+    <section id="view-wheel" class="view">
+
+      <div class="banner" id="banner" hidden></div>
+
+      <div class="stage">
+        <div class="halo"></div>
+        <div class="rotor" id="rotor">
+          <svg id="wheelSvg" viewBox="0 0 200 200" aria-hidden="true"></svg>
         </div>
+        <div class="pointer"></div>
+        <div class="hub"><span id="hubLabel">NX</span></div>
+        <div class="burst" id="burst"></div>
       </div>
 
       <div class="result" id="result" hidden>
+        <div class="result-icon" id="resultIcon">🎁</div>
         <div class="result-title" id="resultTitle"></div>
-        <div class="result-code" id="resultCode"></div>
+        <div class="result-sub" id="resultSub"></div>
+        <button class="result-code" id="resultCode" type="button" hidden></button>
       </div>
 
-      <button class="spin-btn" id="spinBtn" type="button">Крутить</button>
+      <button class="spin-btn" id="spinBtn" type="button" disabled>Крутить</button>
+      <p class="hint" id="hint">Загружаем...</p>
 
-      <p class="hint" id="spinHint">Проверяем доступные прокруты...</p>
     </section>
 
-    <section id="inventoryView" class="view" hidden>
-      <ul class="inventory-list" id="inventoryList"></ul>
-      <div class="empty-state" id="inventoryEmpty" hidden>
+    <!-- =========================== ИНВЕНТАРЬ =========================== -->
+    <section id="view-inventory" class="view" hidden>
+
+      <h2 class="section-title">Готовы к получению</h2>
+      <ul class="cards" id="inventoryList"></ul>
+
+      <div class="empty" id="inventoryEmpty" hidden>
+        <div class="empty-icon">🎟️</div>
         <p>Пока нет призов</p>
-        <span>Крути рулетку, чтобы выиграть бонус</span>
+        <span>Отсканируй QR на ресепшене и крути рулетку</span>
       </div>
+
+      <div id="historyBlock" hidden>
+        <h2 class="section-title">Уже забрано</h2>
+        <ul class="cards muted" id="historyList"></ul>
+      </div>
+
     </section>
 
-    <nav class="tabs">
-      <button class="tab-btn active" data-tab="roulette">Рулетка</button>
-      <button class="tab-btn" data-tab="inventory">Инвентарь</button>
+    <!-- ============================= АДМИН ============================= -->
+    <section id="view-admin" class="view" hidden>
+
+      <div class="segmented" id="adminNav">
+        <button class="seg active" data-pane="stats" type="button">Отчёт</button>
+        <button class="seg" data-pane="prizes" type="button">Призы</button>
+        <button class="seg" data-pane="clients" type="button">Клиенты</button>
+        <button class="seg" data-pane="team" type="button">Клуб</button>
+      </div>
+
+      <!-- отчёт -->
+      <div class="pane" id="pane-stats">
+        <div class="segmented small" id="periodNav">
+          <button class="seg" data-days="1" type="button">Сутки</button>
+          <button class="seg active" data-days="7" type="button">Неделя</button>
+          <button class="seg" data-days="30" type="button">Месяц</button>
+        </div>
+
+        <div class="tiles" id="statTiles"></div>
+
+        <h2 class="section-title">Что выигрывают и что забирают</h2>
+        <div class="table-wrap">
+          <table class="funnel" id="funnelTable"></table>
+        </div>
+        <p class="foot" id="funnelFoot"></p>
+
+        <h2 class="section-title">Коды на руках у клиентов</h2>
+        <ul class="cards compact" id="outstandingList"></ul>
+        <p class="foot" id="outstandingFoot"></p>
+
+        <h2 class="section-title">Откуда приходят</h2>
+        <ul class="cards compact" id="sourcesList"></ul>
+
+        <h2 class="section-title">Последние действия</h2>
+        <ul class="cards compact" id="activityList"></ul>
+      </div>
+
+      <!-- призы -->
+      <div class="pane" id="pane-prizes" hidden>
+        <p class="foot">Вес задаёт и шанс выпадения, и ширину сектора на колесе. Дневной лимит ограничивает выдачу дорогих призов.</p>
+        <div id="prizeEditor"></div>
+      </div>
+
+      <!-- клиенты -->
+      <div class="pane" id="pane-clients" hidden>
+        <p class="foot" id="clientsFoot">Сверху те, кто был недавно.</p>
+        <ul class="cards compact" id="clientsList"></ul>
+      </div>
+
+      <!-- клуб: настройки, персонал, QR -->
+      <div class="pane" id="pane-team" hidden>
+        <h2 class="section-title">Настройки</h2>
+        <div class="form" id="settingsForm"></div>
+
+        <h2 class="section-title">QR-наклейки</h2>
+        <p class="foot">Страница для печати наклеек с QR-кодом. Открывается в браузере.</p>
+        <a class="link-btn" id="qrLink" href="/qr" target="_blank" rel="noopener">Открыть страницу печати</a>
+
+        <h2 class="section-title">Персонал</h2>
+        <div class="form" id="staffForm"></div>
+        <ul class="cards compact" id="staffList"></ul>
+      </div>
+
+    </section>
+
+    <nav class="tabs" id="tabs">
+      <button class="tab active" data-tab="wheel" type="button"><span>🎰</span>Рулетка</button>
+      <button class="tab" data-tab="inventory" type="button"><span>🎟️</span>Призы</button>
+      <button class="tab" data-tab="admin" type="button" hidden><span>📊</span>Админ</button>
     </nav>
+
   </div>
+
+  <div class="toast" id="toast" hidden></div>
 
   <script src="app.js"></script>
 </body>

@@ -1,5 +1,8 @@
 {
   "name": "nexus-roulette",
-  "version": "1.0.0",
-  "private": true
+  "version": "2.0.0",
+  "private": true,
+  "dependencies": {
+    "qrcode": "^1.5.4"
+  }
 }
