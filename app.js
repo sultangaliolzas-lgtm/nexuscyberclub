@@ -24,7 +24,8 @@
    "spinBtn", "hint", "inventoryList", "inventoryEmpty", "historyBlock", "historyList",
    "tabs", "adminNav", "periodNav", "statTiles", "funnelTable", "funnelFoot",
    "outstandingList", "outstandingFoot", "sourcesList", "activityList",
-   "prizeEditor", "clientsList", "clientsFoot", "settingsForm", "staffForm", "staffList",
+   "prizeEditor", "clientsList", "clientsFoot", "clientSearch", "grantAmount", "selfGrant",
+   "settingsForm", "staffForm", "staffList",
    "toast"].forEach(function (id) { el[id] = document.getElementById(id); });
 
   boot();
@@ -147,6 +148,20 @@
       setAdminPane(btn.dataset.pane);
     });
 
+    el.clientSearch.addEventListener("input", renderClients);
+
+    el.selfGrant.addEventListener("click", function () {
+      el.selfGrant.disabled = true;
+      grantTo(myId(), 1)
+        .then(function (res) {
+          state.spins = res.spinsAvailable;
+          renderSpins();
+          toast("Начислено. Прокрутов: " + res.spinsAvailable);
+        })
+        .catch(function () {})
+        .then(function () { el.selfGrant.disabled = false; });
+    });
+
     el.periodNav.addEventListener("click", function (e) {
       var btn = e.target.closest(".seg");
       if (!btn) return;
@@ -154,6 +169,10 @@
       markActive(el.periodNav, btn);
       loadStats();
     });
+  }
+
+  function myId() {
+    return tg && tg.initDataUnsafe && tg.initDataUnsafe.user ? tg.initDataUnsafe.user.id : null;
   }
 
   function setTab(tab) {
@@ -963,18 +982,14 @@
 
   /* ---------------------------------------------------- клиенты */
 
+  var clients = [];
+
   function loadClients() {
     el.clientsList.innerHTML = '<p class="skeleton">Загружаем...</p>';
 
     api("/api/admin/clients")
       .then(function (data) {
-        var clients = data.clients || [];
-        el.clientsList.innerHTML = "";
-
-        if (!clients.length) {
-          el.clientsList.appendChild(fill("skeleton", "В базе пока никого"));
-          return;
-        }
+        clients = data.clients || [];
 
         var lost = clients.filter(function (c) {
           return c.last_seen && Date.now() - new Date(c.last_seen).getTime() > 14 * 86400000;
@@ -985,22 +1000,87 @@
             ? lost + " не заходили больше двух недель — их можно вернуть бонусным прокрутом."
             : "Все заходили в последние две недели.");
 
-        clients.forEach(function (c) {
-          var li = document.createElement("li");
-          li.className = "card";
-
-          var name = c.first_name || (c.username ? "@" + c.username : "ID " + c.id);
-          var sub = "визитов: " + (c.visits_total || 0) +
-                    " · выиграл: " + c.won +
-                    " · забрал: " + c.redeemed;
-
-          li.appendChild(row("👤", name, sub, ago(c.last_seen)));
-          el.clientsList.appendChild(li);
-        });
+        renderClients();
       })
       .catch(function (err) {
         el.clientsList.innerHTML = "";
         el.clientsList.appendChild(fill("skeleton", "Не удалось загрузить: " + err.message));
+      });
+  }
+
+  function renderClients() {
+    var query = el.clientSearch.value.trim().toLowerCase();
+
+    var shown = clients.filter(function (c) {
+      if (!query) return true;
+      return String(c.id).indexOf(query) !== -1 ||
+             (c.first_name || "").toLowerCase().indexOf(query) !== -1 ||
+             (c.username || "").toLowerCase().indexOf(query) !== -1;
+    });
+
+    el.clientsList.innerHTML = "";
+
+    if (!shown.length) {
+      el.clientsList.appendChild(fill("skeleton", query ? "Никого не нашлось" : "В базе пока никого"));
+      return;
+    }
+
+    shown.forEach(function (c) { el.clientsList.appendChild(clientCard(c)); });
+  }
+
+  function clientCard(c) {
+    var li = document.createElement("li");
+    li.className = "card";
+
+    var name = c.first_name || (c.username ? "@" + c.username : "ID " + c.id);
+    var sub = ago(c.last_seen) + " · визитов: " + (c.visits_total || 0) +
+              " · выиграл: " + c.won + " · забрал: " + c.redeemed;
+
+    var side = document.createElement("div");
+    side.className = "client-side";
+
+    var counter = document.createElement("b");
+    counter.textContent = c.visits_available || 0;
+    side.appendChild(counter);
+
+    var give = document.createElement("button");
+    give.className = "btn tiny";
+    give.type = "button";
+    give.textContent = "+";
+    give.title = "Начислить прокруты";
+    side.appendChild(give);
+
+    give.addEventListener("click", function () {
+      give.disabled = true;
+      grantTo(c.id, grantAmount())
+        .then(function (res) {
+          c.visits_available = res.spinsAvailable;
+          counter.textContent = res.spinsAvailable;
+          toast("Начислено " + res.granted + " · у клиента теперь " + res.spinsAvailable);
+        })
+        .catch(function () {})
+        .then(function () { give.disabled = false; });
+    });
+
+    li.appendChild(row("👤", name, sub, side));
+    return li;
+  }
+
+  function grantAmount() {
+    return Math.max(1, Math.min(20, Math.round(Number(el.grantAmount.value)) || 1));
+  }
+
+  // Начисление идёт через сервер и попадает в ленту действий: видно,
+  // кто и кому выдал прокруты.
+  function grantTo(userId, amount) {
+    return api("/api/admin/grant", { method: "POST", body: { userId: userId, amount: amount } })
+      .then(function (res) {
+        haptic("success");
+        return res;
+      })
+      .catch(function (err) {
+        toast("Ошибка: " + err.message, true);
+        throw err;
       });
   }
 

@@ -6,8 +6,8 @@ const WEBAPP_URL = process.env.WEBAPP_URL;
 
 const TELEGRAM_API = "https://api.telegram.org/bot" + BOT_TOKEN;
 
-const ID_PATTERN = /^\d{5,}$/;
-const USERNAME_PATTERN = /^@[a-zA-Z0-9_]{5,}$/;
+const ID_PATTERN = /^(\d{5,})(?:\s+(\d{1,2}))?$/;
+const USERNAME_PATTERN = /^(@[a-zA-Z0-9_]{5,})(?:\s+(\d{1,2}))?$/;
 const CODE_PATTERN = /^NX-[A-F0-9]{8}$/i;
 
 module.exports = async function handler(req, res) {
@@ -64,43 +64,52 @@ async function handleStaffMessage(chatId, staffId, text, role) {
     return;
   }
 
-  if (ID_PATTERN.test(text)) {
-    await grantSpin(chatId, Number(text), staffId);
+  const byId = ID_PATTERN.exec(text);
+  if (byId) {
+    await grantSpin(chatId, Number(byId[1]), staffId, amountOf(byId[2]));
     return;
   }
 
-  if (USERNAME_PATTERN.test(text)) {
-    const userId = await db.resolveUserIdByUsername(text);
+  const byName = USERNAME_PATTERN.exec(text);
+  if (byName) {
+    const userId = await db.resolveUserIdByUsername(byName[1]);
     if (!userId) {
       await sendMessage(
         chatId,
-        "Не нашёл клиента с юзернеймом " + text + ".\n" +
+        "Не нашёл клиента с юзернеймом " + byName[1] + ".\n" +
           "Он должен хотя бы раз нажать /start в этом боте — либо используйте числовой ID (команда /id у клиента)."
       );
       return;
     }
-    await grantSpin(chatId, userId, staffId);
+    await grantSpin(chatId, userId, staffId, amountOf(byName[2]));
     return;
   }
 
   await sendHelp(chatId, role);
 }
 
-async function grantSpin(chatId, userId, staffId) {
+// Потолок в 20 штук — защита от опечатки вроде лишнего нуля.
+function amountOf(raw) {
+  const n = Math.round(Number(raw));
+  if (!isFinite(n) || n < 1) return 1;
+  return Math.min(20, n);
+}
+
+async function grantSpin(chatId, userId, staffId, amount) {
   try {
     const existing = await db.getUser(userId);
     if (!existing) {
       await db.upsertUser({ id: userId, visits_available: 0 });
     }
 
-    const left = await db.rpc("do_grant", { p_user_id: userId, p_staff_id: staffId, p_amount: 1 });
+    const left = await db.rpc("do_grant", { p_user_id: userId, p_staff_id: staffId, p_amount: amount });
 
     if (left === -1 || left === null) {
       await sendMessage(chatId, "Не получилось начислить прокрут. Проверьте ID.");
       return;
     }
 
-    await sendMessage(chatId, "Готово. Клиенту " + userId + " начислен прокрут.\nДоступно прокрутов: " + left);
+    await sendMessage(chatId, "Готово. Клиенту " + userId + " начислено прокрутов: " + amount + ".\nДоступно прокрутов: " + left);
   } catch (err) {
     console.error("grantSpin error:", err);
     await sendMessage(chatId, "Не получилось начислить прокрут. Проверьте ID.");
@@ -173,7 +182,8 @@ async function sendHelp(chatId, role) {
     "Команды сотрудника:\n\n" +
       "• Пришлите код вида NX-1A2B3C4D — приз будет погашен.\n" +
       "• Пришлите числовой ID клиента — начислится один прокрут.\n" +
-      "• Пришлите @юзернейм клиента — то же самое.\n\n" +
+      "• Пришлите @юзернейм клиента — то же самое.\n" +
+      "• Через пробел можно указать количество: 420115296 5\n\n" +
       (role === "owner"
         ? "Статистика, редактор призов и база клиентов — во вкладке «Админ» внутри приложения."
         : "")

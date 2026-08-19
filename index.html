@@ -131,12 +131,20 @@
 
       <!-- клиенты -->
       <div class="pane" id="pane-clients" hidden>
+        <div class="tools">
+          <input id="clientSearch" type="search" placeholder="Поиск: имя, @юзернейм или ID" autocomplete="off">
+          <label class="amount">по <input id="grantAmount" type="number" value="1" min="1" max="20"> шт.</label>
+        </div>
         <p class="foot" id="clientsFoot">Сверху те, кто был недавно.</p>
         <ul class="cards compact" id="clientsList"></ul>
       </div>
 
       <!-- клуб: настройки, персонал, QR -->
       <div class="pane" id="pane-team" hidden>
+        <h2 class="section-title">Быстрое начисление</h2>
+        <button class="btn ghost" id="selfGrant" type="button">Начислить себе прокрут</button>
+        <p class="foot">Чтобы проверить рулетку, не сканируя QR. Клиентам прокруты начисляются во вкладке «Клиенты».</p>
+
         <h2 class="section-title">Настройки</h2>
         <div class="form" id="settingsForm"></div>
 
