@@ -772,7 +772,7 @@
   function loadStats() {
     el.statTiles.innerHTML = '<p class="skeleton">Считаем...</p>';
 
-    api("/api/admin/stats?days=" + state.adminDays)
+    api("/api/admin?r=stats&days=" + state.adminDays)
       .then(function (data) {
         renderTiles(data.summary);
         renderFunnel(data.prizes);
@@ -965,7 +965,7 @@
     if (state.prizes) return;
     el.prizeEditor.innerHTML = '<p class="skeleton">Загружаем...</p>';
 
-    api("/api/admin/prizes")
+    api("/api/admin?r=prizes")
       .then(function (data) {
         state.prizes = data.prizes || [];
         renderPrizeEditor();
@@ -1047,7 +1047,7 @@
           enabled: check.checked
         };
 
-        api("/api/admin/prizes", { method: "PATCH", body: patch })
+        api("/api/admin?r=prizes", { method: "PATCH", body: patch })
           .then(function (res) {
             Object.assign(prize, res.prize);
             state.prizes = null;
@@ -1097,7 +1097,7 @@
   function loadClients() {
     el.clientsList.innerHTML = '<p class="skeleton">Загружаем...</p>';
 
-    api("/api/admin/clients")
+    api("/api/admin?r=clients")
       .then(function (data) {
         clients = data.clients || [];
 
@@ -1183,7 +1183,7 @@
   // Начисление идёт через сервер и попадает в ленту действий: видно,
   // кто и кому выдал прокруты.
   function grantTo(userId, amount) {
-    return api("/api/admin/grant", { method: "POST", body: { userId: userId, amount: amount } })
+    return api("/api/admin?r=grant", { method: "POST", body: { userId: userId, amount: amount } })
       .then(function (res) {
         haptic("success");
         return res;
@@ -1207,7 +1207,7 @@
     el.settingsForm.dataset.ready = "1";
     el.settingsForm.innerHTML = '<p class="skeleton">Загружаем...</p>';
 
-    api("/api/admin/settings")
+    api("/api/admin?r=settings")
       .then(function (data) {
         var s = data.settings;
         el.settingsForm.innerHTML = "";
@@ -1239,7 +1239,7 @@
 
         save.addEventListener("click", function () {
           save.disabled = true;
-          api("/api/admin/settings", {
+          api("/api/admin?r=settings", {
             method: "PATCH",
             body: {
               club_name: fName.input.value,
@@ -1286,7 +1286,7 @@
       if (!id) { toast("Введите ID", true); return; }
 
       add.disabled = true;
-      api("/api/admin/staff", { method: "POST", body: { id: id, role: "staff", title: fTitle.input.value || null } })
+      api("/api/admin?r=staff", { method: "POST", body: { id: id, role: "staff", title: fTitle.input.value || null } })
         .then(function () {
           fId.input.value = "";
           fTitle.input.value = "";
@@ -1302,7 +1302,7 @@
   function loadStaff() {
     el.staffList.innerHTML = '<p class="skeleton">Загружаем...</p>';
 
-    api("/api/admin/staff")
+    api("/api/admin?r=staff")
       .then(function (data) {
         var staff = data.staff || [];
         el.staffList.innerHTML = "";
@@ -1324,7 +1324,7 @@
             del.textContent = "Убрать";
             del.addEventListener("click", function () {
               del.disabled = true;
-              api("/api/admin/staff?id=" + member.id, { method: "DELETE" })
+              api("/api/admin?r=staff&id=" + member.id, { method: "DELETE" })
                 .then(function () { toast("Убран"); loadStaff(); })
                 .catch(function (err) { toast("Ошибка: " + err.message, true); del.disabled = false; });
             });
