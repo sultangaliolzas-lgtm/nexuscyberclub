@@ -1,0 +1,15 @@
+# Секреты: ключи Supabase и токен бота живут только в переменных
+# окружения Vercel и в локальном .env.local, в репозиторий не попадают.
+.env
+.env.*
+!.env.example
+
+node_modules/
+.vercel/
+
+# Мусор ОС и редакторов
+Thumbs.db
+desktop.ini
+.DS_Store
+.idea/
+.vscode/
