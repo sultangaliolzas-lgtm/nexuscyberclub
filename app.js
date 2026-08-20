@@ -510,7 +510,6 @@
 
       state.items.unshift({
         title: prize.title,
-        tier: prize.tier,
         code: prize.code,
         icon: prize.icon,
         wonAt: new Date().toISOString(),
@@ -571,7 +570,7 @@
       row(
         item.icon || "🎁",
         item.title,
-        span("tier tier-" + (item.tier || "COMMON"), item.tier || ""),
+        "", // редкость клиенту не показываем: она ничего не меняет при получении
         done
           ? "получен " + shortDate(item.redeemedAt)
           : span(expiringSoon ? "soon" : "", until(item.expiresAt))

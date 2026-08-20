@@ -134,7 +134,7 @@ async function redeemCode(chatId, code, staffId) {
     if (result && result.ok) {
       await sendMessage(
         chatId,
-        "✅ " + result.title + " (" + result.tier + ")\n\n" +
+        "✅ " + result.title + "\n\n" +
           "Код погашен. Выдайте приз клиенту."
       );
       return;

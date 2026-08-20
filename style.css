@@ -359,11 +359,6 @@ body {
 .card-side { font-size: 12px; color: var(--dim); text-align: right; white-space: nowrap; flex-shrink: 0; }
 .card-side b { display: block; font-size: 15px; color: var(--text); }
 
-.tier { font-size: 10px; font-weight: 800; letter-spacing: 1px; }
-.tier-COMMON { color: var(--dim); }
-.tier-RARE   { color: #31d0ff; }
-.tier-EPIC   { color: #c56bff; }
-
 .code-line {
   margin-top: 11px;
   padding: 11px;
