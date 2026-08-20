@@ -197,6 +197,18 @@
 
         <h2 class="section-title">Массовая рассылка</h2>
         <textarea id="castText" rows="5" maxlength="3500" placeholder="Например: в субботу турнир по CS2, призовой фонд 100 000 ₸. Запись на стойке."></textarea>
+        <div class="attach">
+          <label class="link-btn" for="castPhoto" id="castPhotoBtn">Прикрепить фото</label>
+          <input id="castPhoto" type="file" accept="image/*" hidden>
+        </div>
+
+        <div class="attach-preview" id="castPhotoPreview" hidden>
+          <img id="castPhotoImg" alt="Вложение рассылки">
+          <button class="btn ghost" id="castPhotoRemove" type="button">Убрать фото</button>
+        </div>
+
+        <p class="foot" id="castLimit"></p>
+
         <div class="segmented small" id="castAudience">
           <button class="seg active" data-aud="all" type="button">Все</button>
           <button class="seg" data-aud="active" type="button">Активные</button>

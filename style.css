@@ -886,3 +886,31 @@ body {
   font-size: 12px;
   padding: 9px 3px;
 }
+
+/* ------------------------------------------- вложение рассылки */
+
+.attach { margin-bottom: 11px; }
+
+/* Поле выбора файла спрятано, кликом по нему управляет подпись:
+   системную кнопку "Обзор..." не стилизовать, а выглядеть она должна
+   так же, как остальные кнопки кабинета. */
+.attach label { cursor: pointer; }
+
+.attach-preview {
+  margin-bottom: 11px;
+  padding: 11px;
+  border-radius: var(--radius);
+  background: var(--card);
+  border: 1px solid var(--line);
+}
+
+.attach-preview img {
+  display: block;
+  width: 100%;
+  max-height: 240px;
+  margin-bottom: 11px;
+  border-radius: 12px;
+  object-fit: cover;
+}
+
+#castLimit:empty { display: none; }

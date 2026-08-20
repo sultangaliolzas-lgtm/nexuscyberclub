@@ -37,6 +37,8 @@
    "remindForm", "remindNow", "remindResult",
    "castText", "castAudience", "castAudienceFoot", "castSend",
    "castProgress", "castBar", "castProgressFoot", "castList",
+   "castPhoto", "castPhotoBtn", "castPhotoPreview", "castPhotoImg",
+   "castPhotoRemove", "castLimit",
    "deskCode", "deskSubmit", "deskScan", "deskResult", "deskLog", "deskHint",
    "toast"].forEach(function (id) { el[id] = document.getElementById(id); });
 
@@ -210,6 +212,10 @@
 
     el.castSend.addEventListener("click", startBroadcast);
     el.remindNow.addEventListener("click", remindNow);
+
+    el.castText.addEventListener("input", updateCastLimit);
+    el.castPhoto.addEventListener("change", attachPhoto);
+    el.castPhotoRemove.addEventListener("click", clearPhoto);
   }
 
   function myId() {
@@ -1720,6 +1726,107 @@
     el.castAudienceFoot.textContent = text;
   }
 
+  /* ------------------------------------------------ вложение рассылки */
+
+  var castPhotoId = null;              // file_id картинки на серверах Telegram
+  var CAPTION_LIMIT = 1024;            // столько Telegram разрешает в подписи к фото
+  var TEXT_LIMIT = 3500;
+
+  function attachPhoto() {
+    var file = el.castPhoto.files && el.castPhoto.files[0];
+    if (!file) return;
+
+    el.castPhotoBtn.textContent = "Загружаем...";
+
+    shrinkImage(file, 1600, 0.85)
+      .then(function (dataUrl) {
+        el.castPhotoImg.src = dataUrl;
+        return api("/api/admin?r=photo", { method: "POST", body: { data: dataUrl } });
+      })
+      .then(function (res) {
+        castPhotoId = res.fileId;
+        el.castPhotoPreview.hidden = false;
+        el.castPhotoBtn.textContent = "Заменить фото";
+        updateCastLimit();
+        haptic("success");
+      })
+      .catch(function (err) {
+        clearPhoto();
+        toast("Не удалось загрузить фото: " + err.message, true);
+      })
+      .then(function () {
+        // Сброс поля: иначе повторный выбор того же файла не вызовет
+        // событие change и кнопка залипнет.
+        el.castPhoto.value = "";
+      });
+  }
+
+  function clearPhoto() {
+    castPhotoId = null;
+    el.castPhoto.value = "";
+    el.castPhotoImg.removeAttribute("src");
+    el.castPhotoPreview.hidden = true;
+    el.castPhotoBtn.textContent = "Прикрепить фото";
+    updateCastLimit();
+  }
+
+  // Телефон снимает по несколько мегабайт, а тело запроса ограничено.
+  // Ужимаем в браузере: Telegram всё равно пережимает фотографии у себя,
+  // так что видимого качества это не стоит.
+  function shrinkImage(file, maxSide, quality) {
+    return loadBitmap(file).then(function (img) {
+      var w = img.width, h = img.height;
+      var scale = Math.min(1, maxSide / Math.max(w, h));
+
+      var canvas = document.createElement("canvas");
+      canvas.width = Math.max(1, Math.round(w * scale));
+      canvas.height = Math.max(1, Math.round(h * scale));
+      canvas.getContext("2d").drawImage(img, 0, 0, canvas.width, canvas.height);
+
+      if (img.close) img.close();
+      return canvas.toDataURL("image/jpeg", quality);
+    });
+  }
+
+  // createImageBitmap умеет развернуть снимок по метке EXIF — без этого
+  // афиша, снятая вертикально, уходит клиентам боком. Там, где его нет,
+  // падаем на обычный Image.
+  function loadBitmap(file) {
+    if (window.createImageBitmap) {
+      try {
+        return createImageBitmap(file, { imageOrientation: "from-image" });
+      } catch (e) {
+        // Старые реализации не знают второго аргумента.
+      }
+    }
+
+    return new Promise(function (resolve, reject) {
+      var url = URL.createObjectURL(file);
+      var img = new Image();
+
+      img.onload = function () { URL.revokeObjectURL(url); resolve(img); };
+      img.onerror = function () {
+        URL.revokeObjectURL(url);
+        reject(new Error("файл не читается"));
+      };
+
+      img.src = url;
+    });
+  }
+
+  function updateCastLimit() {
+    var limit = castPhotoId ? CAPTION_LIMIT : TEXT_LIMIT;
+    var left = limit - el.castText.value.length;
+
+    if (castPhotoId) {
+      el.castLimit.textContent = left < 0
+        ? "Текст длиннее подписи к фото на " + (-left) + " симв. Telegram разрешает только " + CAPTION_LIMIT + " — сократите или уберите фото."
+        : "С фотографией текст уходит подписью: осталось " + left + " симв. из " + CAPTION_LIMIT + ".";
+    } else {
+      el.castLimit.textContent = left < 500 ? "Осталось символов: " + left + "." : "";
+    }
+  }
+
   function remindNow() {
     el.remindNow.disabled = true;
     el.remindResult.textContent = "Отправляем...";
@@ -1750,6 +1857,13 @@
       return;
     }
 
+    var limit = castPhotoId ? CAPTION_LIMIT : TEXT_LIMIT;
+    if (text.length > limit) {
+      toast("Текст длиннее " + limit + " символов", true);
+      updateCastLimit();
+      return;
+    }
+
     var count = castSizes[castAudience] || 0;
     if (!count) {
       toast("В этой аудитории сейчас никого нет", true);
@@ -1761,7 +1875,10 @@
       el.castProgressFoot.textContent = "Готовим список получателей...";
       el.castProgress.hidden = false;
 
-      api("/api/admin?r=broadcast", { method: "POST", body: { text: text, audience: castAudience } })
+      api("/api/admin?r=broadcast", {
+        method: "POST",
+        body: { text: text, audience: castAudience, photo: castPhotoId }
+      })
         .then(function (created) {
           runBroadcast(created.id, created.total);
         })
@@ -1796,6 +1913,7 @@
           el.castSend.disabled = false;
           el.castSend.textContent = "Отправить рассылку";
           el.castText.value = "";
+          clearPhoto();
           toast("Рассылка отправлена");
           haptic("success");
           loadBroadcasts();
@@ -1837,7 +1955,8 @@
         ? span("", b.sent + " из " + b.total)
         : span("soon", b.sent + " из " + b.total);
 
-      li.appendChild(row("📣", firstLine(b.text), AUDIENCE_LABEL[b.audience] || b.audience, side));
+      li.appendChild(row(b.photo_file_id ? "🖼" : "📣", firstLine(b.text),
+                         AUDIENCE_LABEL[b.audience] || b.audience, side));
 
       var hint = fill("card-hint", shortDate(b.created_at) +
         (b.failed ? " · не дошло: " + b.failed : ""));

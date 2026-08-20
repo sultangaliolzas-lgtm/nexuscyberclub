@@ -978,6 +978,11 @@ create table if not exists broadcast_recipients (
 create index if not exists broadcast_recipients_queue_idx
   on broadcast_recipients(broadcast_id, status);
 
+-- Картинка хранится не у нас, а на серверах Telegram: при загрузке он
+-- отдаёт file_id, по которому потом можно отправлять сколько угодно раз
+-- без повторной передачи файла. Своё хранилище тут было бы лишним.
+alter table broadcasts add column if not exists photo_file_id text;
+
 
 -- ------------------------------------------------------------
 --  Кого пора предупредить о сгорании приза
@@ -1076,7 +1081,11 @@ as $$
 $$;
 
 
-create or replace function create_broadcast(p_text text, p_actor bigint, p_audience text)
+-- Функция получила четвёртый аргумент. Без явного drop в базе остались
+-- бы обе версии, и PostgREST не смог бы выбрать между ними.
+drop function if exists create_broadcast(text, bigint, text);
+
+create or replace function create_broadcast(p_text text, p_actor bigint, p_audience text, p_photo text default null)
 returns json
 language plpgsql
 as $$
@@ -1093,8 +1102,8 @@ begin
     return json_build_object('error', 'bad_audience');
   end if;
 
-  insert into broadcasts (text, audience, actor_id, status)
-  values (btrim(p_text), v_aud, p_actor, 'sending')
+  insert into broadcasts (text, audience, actor_id, status, photo_file_id)
+  values (btrim(p_text), v_aud, p_actor, 'sending', nullif(btrim(coalesce(p_photo, '')), ''))
   returning id into v_id;
 
   insert into broadcast_recipients (broadcast_id, user_id)
@@ -1137,10 +1146,13 @@ as $$
 declare
   v_text   text;
   v_status text;
+  v_photo  text;
   v_ids    json;
   v_left   int;
 begin
-  select b.text, b.status into v_text, v_status from broadcasts b where b.id = p_id;
+  select b.text, b.status, b.photo_file_id
+    into v_text, v_status, v_photo
+    from broadcasts b where b.id = p_id;
 
   if v_text is null then
     return json_build_object('error', 'not_found');
@@ -1175,7 +1187,7 @@ begin
     from broadcast_recipients
    where broadcast_id = p_id and status = 'pending';
 
-  return json_build_object('text', v_text, 'userIds', v_ids, 'pending', v_left);
+  return json_build_object('text', v_text, 'photo', v_photo, 'userIds', v_ids, 'pending', v_left);
 end;
 $$;
 
@@ -1239,7 +1251,7 @@ language sql
 as $$
   select coalesce(json_agg(t), '[]'::json) from (
     select b.id, b.text, b.audience, b.status, b.total, b.sent, b.failed,
-           b.created_at, b.finished_at
+           b.photo_file_id, b.created_at, b.finished_at
       from broadcasts b
      order by b.created_at desc
      limit greatest(1, coalesce(p_limit, 20))

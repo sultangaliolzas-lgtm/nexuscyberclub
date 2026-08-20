@@ -1,6 +1,7 @@
 const db = require("../lib/db");
 const { requireOwner, methodGuard } = require("../lib/guard");
 const { runReminders, sendBroadcastBatch } = require("../lib/notify");
+const { uploadPhoto, CAPTION_LIMIT } = require("../lib/telegram");
 
 // Весь кабинет владельца — одна serverless-функция с раздельными
 // обработчиками. Держать по файлу на раздел было бы аккуратнее, но
@@ -19,6 +20,7 @@ const ROUTES = {
   log:      { methods: ["GET"],                     handler: log },
   remind:   { methods: ["POST"],                    handler: remind },
   broadcast:{ methods: ["GET", "POST", "PATCH"],    handler: broadcast },
+  photo:    { methods: ["POST"],                    handler: photo },
   export:   { methods: ["POST"],                    handler: exportCsv }
 };
 
@@ -339,9 +341,13 @@ async function broadcast(req, res, auth) {
   }
 
   if (req.method === "POST") {
-    // 3500 символов вместо телеграмных 4096 — с запасом на случай, если
-    // текст придётся дополнить служебной строкой.
-    const text = String((req.body && req.body.text) || "").trim().slice(0, 3500);
+    const photoId = (req.body && req.body.photo) ? String(req.body.photo).slice(0, 200) : null;
+
+    // С картинкой текст уходит подписью, а подпись у Telegram короче
+    // сообщения вчетверо. 3500 вместо телеграмных 4096 — запас на
+    // случай, если текст придётся дополнить служебной строкой.
+    const limit = photoId ? CAPTION_LIMIT : 3500;
+    const text = String((req.body && req.body.text) || "").trim().slice(0, limit);
 
     if (!text) {
       res.status(400).json({ error: "empty_text" });
@@ -351,7 +357,8 @@ async function broadcast(req, res, auth) {
     const created = await db.rpc("create_broadcast", {
       p_text: text,
       p_actor: auth.user.id,
-      p_audience: String((req.body && req.body.audience) || "all")
+      p_audience: String((req.body && req.body.audience) || "all"),
+      p_photo: photoId
     });
 
     if (created && created.error) {
@@ -376,6 +383,54 @@ async function broadcast(req, res, auth) {
   }
 
   res.status(200).json(progress);
+}
+
+/* ---------------------------------------------------------- картинка */
+
+// Картинка загружается один раз, до рассылки: Telegram возвращает
+// file_id, и дальше сообщение уходит по нему, не передавая файл заново.
+// Своё хранилище не нужно, а владелец заодно получает превью в чат и
+// видит объявление ровно так, как его увидит клиент.
+async function photo(req, res, auth) {
+  const raw = String((req.body && req.body.data) || "");
+  const match = /^data:image\/(?:jpeg|jpg|png|webp);base64,([A-Za-z0-9+/=]+)$/.exec(raw);
+
+  if (!match) {
+    res.status(400).json({ error: "bad_image" });
+    return;
+  }
+
+  const buffer = Buffer.from(match[1], "base64");
+
+  // Приложение ужимает снимок перед отправкой, так что сюда должно
+  // приходить несколько сотен килобайт. Проверка — на случай, если
+  // запрос пришёл мимо приложения.
+  if (!buffer.length || buffer.length > 4 * 1024 * 1024) {
+    res.status(413).json({ error: "too_large" });
+    return;
+  }
+
+  const result = await uploadPhoto(auth.user.id, buffer, "broadcast.jpg",
+                                   "Так объявление увидят клиенты");
+
+  if (!result.ok) {
+    console.error("uploadPhoto failed:", result.error);
+
+    // Превью уходит в личку владельцу, а бот не может писать первым
+    // тому, кто с ним не переписывался. Это самая вероятная причина
+    // отказа, и она лечится одной командой.
+    const blocked = /blocked|chat not found|initiate/i.test(result.error || "");
+
+    res.status(502).json({
+      error: "upload_failed",
+      reason: blocked
+        ? "Бот не может прислать вам превью. Напишите ему /start и повторите"
+        : "Telegram не принял картинку"
+    });
+    return;
+  }
+
+  res.status(200).json({ fileId: result.fileId });
 }
 
 /* ---------------------------------------------------------- выгрузка */
