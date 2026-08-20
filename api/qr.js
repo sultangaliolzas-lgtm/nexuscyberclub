@@ -1,11 +1,5 @@
 const QRCode = require("qrcode");
-
-const BOT_TOKEN = process.env.BOT_TOKEN;
-const TELEGRAM_API = "https://api.telegram.org/bot" + BOT_TOKEN;
-
-// Юзернейм бота меняется редко, а лямбда живёт между запросами,
-// поэтому спрашиваем его у Telegram один раз и держим в памяти.
-let cachedUsername = process.env.BOT_USERNAME || null;
+const { botUsername } = require("../lib/telegram");
 
 const CODE_PATTERN = /^NX-[A-F0-9]{8}$/;
 
@@ -36,7 +30,7 @@ module.exports = async function handler(req, res) {
   const source = normalizeSource(req.query && req.query.source);
 
   try {
-    const username = await resolveBotUsername();
+    const username = await botUsername();
     if (!username) {
       res.status(500).json({ error: "bot_username_unavailable" });
       return;
@@ -70,17 +64,6 @@ async function renderQr(res, text) {
   res.status(200).send(svg);
 }
 
-async function resolveBotUsername() {
-  if (cachedUsername) return cachedUsername;
-  if (!BOT_TOKEN) return null;
-
-  const resp = await fetch(TELEGRAM_API + "/getMe");
-  if (!resp.ok) return null;
-
-  const data = await resp.json();
-  cachedUsername = data && data.result ? data.result.username : null;
-  return cachedUsername;
-}
 
 function normalizeSource(raw) {
   if (!raw) return "r1";
