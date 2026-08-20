@@ -21,7 +21,8 @@
     adminDays: 7,
     prizes: null,
     canMessage: true,   // пока не знаем — не пугаем клиента подсказкой
-    botLink: null
+    botLink: null,
+    origin: location.origin
   };
 
   var el = {};
@@ -1580,6 +1581,7 @@
     renderStaffForm();
     loadStaff();
     loadConfigLog();
+    loadBotMenu();
   }
 
   // Файл уходит сообщением в чат бота: мини-апп внутри Telegram не может
@@ -2023,6 +2025,40 @@
     });
   }
 
+  function loadBotMenu() {
+    el.menuResult.textContent = "Проверяем текущую кнопку...";
+
+    api("/api/admin?r=menu")
+      .then(function (res) {
+        // Без WEBAPP_URL привязка обречена, и лучше сказать это сразу,
+        // чем дать нажать кнопку и получить невнятную ошибку.
+        el.menuResult.textContent = res.webappUrl
+          ? describeMenu(res.button, res.error)
+          : "В переменных окружения Vercel не задан WEBAPP_URL — привязать кнопку не к чему.";
+      })
+      .catch(function (err) { el.menuResult.textContent = "Не удалось проверить: " + err.message; });
+  }
+
+  // Показываем не «сохранено», а то, что Telegram отдаёт на самом деле.
+  // Иначе настройка превращается в гадание: панель рапортует об успехе,
+  // а в чате всё по-старому, и непонятно, кто виноват — сервер или кэш
+  // приложения Telegram.
+  function describeMenu(button, error) {
+    if (error) return "Telegram не ответил: " + error;
+    if (!button) return "Telegram не сообщил, какая кнопка стоит.";
+
+    if (button.type === "web_app") {
+      var url = (button.web_app && button.web_app.url) || "";
+      var mine = state.origin && url.indexOf(state.origin) === 0;
+
+      return "Сейчас в чате: «" + (button.text || "") + "» → " + url +
+        (mine ? " — это текущее приложение." : " — ЧУЖОЙ АДРЕС, кнопка открывает старую версию.");
+    }
+
+    if (button.type === "commands") return "Сейчас в чате: обычное меню команд, приложение с кнопки не открывается.";
+    return "Сейчас в чате: кнопка по умолчанию (" + button.type + ").";
+  }
+
   function setBotMenu(enabled) {
     el.menuBind.disabled = true;
     el.menuClear.disabled = true;
@@ -2030,9 +2066,8 @@
 
     api("/api/admin?r=menu", { method: "POST", body: { enabled: enabled } })
       .then(function (res) {
-        el.menuResult.textContent = res.enabled
-          ? "Готово: кнопка открывает " + res.url + ". В уже открытом чате она обновится не сразу — перезайдите в переписку с ботом."
-          : "Кнопка убрана, вместо неё в чате будет обычное меню команд.";
+        el.menuResult.textContent = describeMenu(res.button, null) +
+          " Telegram кэширует кнопку: чтобы увидеть изменение, закройте чат с ботом и откройте заново.";
         haptic("success");
       })
       .catch(function (err) { el.menuResult.textContent = "Ошибка: " + err.message; })

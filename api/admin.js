@@ -1,7 +1,7 @@
 const db = require("../lib/db");
 const { requireOwner, methodGuard } = require("../lib/guard");
 const { runReminders, sendBroadcastBatch } = require("../lib/notify");
-const { uploadPhoto, setMenuButton, CAPTION_LIMIT } = require("../lib/telegram");
+const { uploadPhoto, setMenuButton, getMenuButton, CAPTION_LIMIT } = require("../lib/telegram");
 
 // Весь кабинет владельца — одна serverless-функция с раздельными
 // обработчиками. Держать по файлу на раздел было бы аккуратнее, но
@@ -21,7 +21,7 @@ const ROUTES = {
   remind:   { methods: ["POST"],                    handler: remind },
   broadcast:{ methods: ["GET", "POST", "PATCH"],    handler: broadcast },
   photo:    { methods: ["POST"],                    handler: photo },
-  menu:     { methods: ["POST"],                    handler: menu },
+  menu:     { methods: ["GET", "POST"],             handler: menu },
   export:   { methods: ["POST"],                    handler: exportCsv }
 };
 
@@ -406,6 +406,16 @@ async function broadcast(req, res, auth) {
 // адресом, она будет открывать старую версию приложения даже после
 // переезда — отсюда её можно переписать на текущий адрес или убрать.
 async function menu(req, res) {
+  if (req.method === "GET") {
+    const current = await getMenuButton();
+    res.status(200).json({
+      button: current.ok ? current.button : null,
+      error: current.ok ? null : current.error,
+      webappUrl: process.env.WEBAPP_URL || null
+    });
+    return;
+  }
+
   const enable = !(req.body && req.body.enabled === false);
   const url = process.env.WEBAPP_URL;
 
@@ -421,7 +431,16 @@ async function menu(req, res) {
     return;
   }
 
-  res.status(200).json({ ok: true, enabled: enable, url: enable ? url : null });
+  // Возвращаем не то, что просили, а то, что Telegram теперь отдаёт:
+  // это единственный ответ на вопрос "а точно применилось?".
+  const current = await getMenuButton();
+
+  res.status(200).json({
+    ok: true,
+    enabled: enable,
+    url: enable ? url : null,
+    button: current.ok ? current.button : null
+  });
 }
 
 /* ---------------------------------------------------------- картинка */
