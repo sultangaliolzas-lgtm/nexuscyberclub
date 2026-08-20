@@ -91,6 +91,36 @@
 
     </section>
 
+    <!-- ============================= БРОНЬ ============================= -->
+    <section id="view-booking" class="view" hidden>
+
+      <div class="segmented" id="hallNav"></div>
+      <p class="foot" id="hallSubtitle"></p>
+
+      <h2 class="section-title">Когда придёте</h2>
+      <div class="segmented small" id="dayNav"></div>
+      <div class="slots" id="timeSlots"></div>
+
+      <h2 class="section-title">На сколько часов</h2>
+      <div class="slots" id="hoursNav"></div>
+
+      <h2 class="section-title">Выберите место</h2>
+      <div class="hall" id="hallMap"></div>
+
+      <div class="legend">
+        <span><i class="dot free"></i>свободно</span>
+        <span><i class="dot vip"></i>VIP</span>
+        <span><i class="dot console"></i>консоль</span>
+        <span><i class="dot busy"></i>занято</span>
+      </div>
+
+      <div id="bookSummary" hidden></div>
+
+      <h2 class="section-title">Мои брони</h2>
+      <ul class="cards compact" id="myBookings"></ul>
+
+    </section>
+
     <!-- ============================= КАССА ============================= -->
     <section id="view-desk" class="view" hidden>
 
@@ -109,6 +139,9 @@
       <div id="deskResult"></div>
 
       <p class="foot" id="deskHint">Сверять код глазами не нужно. Сервер сам проверит, не использован ли он, не истёк ли и чей он, и сразу пометит погашенным — второй раз тот же код не сработает.</p>
+
+      <h2 class="section-title">Брони на сегодня</h2>
+      <ul class="cards compact" id="deskBookings"></ul>
 
       <h2 class="section-title">Погашено в этой сессии</h2>
       <ul class="cards compact" id="deskLog"></ul>
@@ -277,6 +310,7 @@
     <nav class="tabs" id="tabs">
       <button class="tab active" data-tab="wheel" type="button">Рулетка</button>
       <button class="tab" data-tab="inventory" type="button">Призы<i class="dot" id="prizeDot" hidden></i></button>
+      <button class="tab" data-tab="booking" type="button">Бронь</button>
       <button class="tab" data-tab="desk" type="button" hidden>Касса</button>
       <button class="tab" data-tab="admin" type="button" hidden>Админ</button>
     </nav>

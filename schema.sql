@@ -1296,3 +1296,343 @@ as $$
 $$;
 
 notify pgrst, 'reload schema';
+
+
+-- ============================================================
+--  Бронирование мест
+--
+--  Демонстрационный модуль: расписание живёт у нас, а не в системе
+--  управления клубом. Когда появится доступ к её API, источником правды
+--  станет она, а этот раздел останется витриной. Структура специально
+--  повторяет то, чем оперируют такие системы (залы, места, тарифы),
+--  чтобы переход свёлся к замене слоя доступа к данным.
+-- ============================================================
+
+-- Нужно для запрета пересекающихся броней: gist-индекс по времени
+-- умеет сравнивать диапазоны, но про обычные типы вроде uuid не знает.
+create extension if not exists btree_gist;
+
+
+create table if not exists halls (
+  id uuid primary key default gen_random_uuid(),
+  name text not null,
+  subtitle text,                               -- "16 мест · RTX 4070"
+  enabled boolean not null default true,
+  sort_order int not null default 0
+);
+
+
+create table if not exists seats (
+  id uuid primary key default gen_random_uuid(),
+  hall_id uuid not null references halls(id) on delete cascade,
+  label text not null,                         -- то, что написано на месте: A1, VIP-2
+  row_no int not null default 1,
+  col_no int not null default 1,
+  zone text not null default 'standard',       -- standard | vip | console
+  enabled boolean not null default true,
+  unique (hall_id, label)
+);
+
+create index if not exists seats_hall_idx on seats(hall_id, row_no, col_no);
+
+
+create table if not exists packages (
+  id uuid primary key default gen_random_uuid(),
+  name text not null,
+  description text,
+  zone text,                                   -- null = подходит к любому месту
+  price_per_hour numeric(10,2) not null default 0,
+  min_hours int not null default 1,
+  max_hours int not null default 8,
+  enabled boolean not null default true,
+  sort_order int not null default 0
+);
+
+
+create table if not exists bookings (
+  id uuid primary key default gen_random_uuid(),
+  user_id bigint not null references users(id),
+  seat_id uuid not null references seats(id),
+  package_id uuid not null references packages(id),
+  code text not null unique,
+  starts_at timestamptz not null,
+  ends_at timestamptz not null,
+  hours int not null,
+  price numeric(10,2) not null default 0,
+  status text not null default 'confirmed',    -- confirmed | cancelled | done | no_show
+  created_at timestamptz not null default now(),
+  cancelled_at timestamptz,
+
+  -- Диапазон считается из границ, а не хранится отдельно: две колонки,
+  -- которые можно рассинхронизировать, здесь означали бы двойную бронь.
+  period tstzrange generated always as (tstzrange(starts_at, ends_at, '[)')) stored
+);
+
+create index if not exists bookings_user_idx on bookings(user_id, starts_at desc);
+create index if not exists bookings_when_idx on bookings(starts_at);
+
+
+-- Главная защита модуля. Проверять занятость места запросом перед
+-- вставкой бесполезно: два одновременных бронирования оба увидят место
+-- свободным и оба запишутся. Здесь пересечение по времени для одного
+-- места запрещает сама база, и обойти это нельзя ничем.
+do $$
+begin
+  if not exists (select 1 from pg_constraint where conname = 'bookings_no_overlap') then
+    alter table bookings add constraint bookings_no_overlap
+      exclude using gist (seat_id with =, period with &&)
+      where (status = 'confirmed');
+  end if;
+end $$;
+
+
+-- ------------------------------------------------------------
+--  Демонстрационная расстановка
+--
+--  Идентификаторы залов заданы явно, а не сгенерированы: скрипт должен
+--  оставаться идемпотентным, а со случайными uuid каждый повторный
+--  запуск плодил бы новые залы. Владелец правит всё это в кабинете.
+-- ------------------------------------------------------------
+
+insert into halls (id, name, subtitle, sort_order) values
+  ('11111111-1111-1111-1111-111111111111', 'Основной зал', 'RTX 4060 · 24 места',   1),
+  ('22222222-2222-2222-2222-222222222222', 'VIP-зона',     'RTX 4080 · кресла Cougar', 2),
+  ('33333333-3333-3333-3333-333333333333', 'PlayStation',  'PS5 · диваны',          3)
+on conflict (id) do nothing;
+
+insert into seats (hall_id, label, row_no, col_no, zone)
+select '11111111-1111-1111-1111-111111111111', chr(64 + r) || c, r, c, 'standard'
+  from generate_series(1, 4) r, generate_series(1, 6) c
+on conflict (hall_id, label) do nothing;
+
+insert into seats (hall_id, label, row_no, col_no, zone)
+select '22222222-2222-2222-2222-222222222222', 'V' || ((r - 1) * 3 + c), r, c, 'vip'
+  from generate_series(1, 2) r, generate_series(1, 3) c
+on conflict (hall_id, label) do nothing;
+
+insert into seats (hall_id, label, row_no, col_no, zone)
+select '33333333-3333-3333-3333-333333333333', 'PS' || c, 1, c, 'console'
+  from generate_series(1, 4) c
+on conflict (hall_id, label) do nothing;
+
+insert into packages (id, name, description, zone, price_per_hour, min_hours, max_hours, sort_order) values
+  ('aaaaaaaa-0000-0000-0000-000000000001', 'Стандарт',      'Обычное игровое место',                      'standard',  700, 1, 8, 1),
+  ('aaaaaaaa-0000-0000-0000-000000000002', 'Стандарт плюс', 'То же место, но с напитком в подарок',       'standard',  900, 2, 8, 2),
+  ('aaaaaaaa-0000-0000-0000-000000000003', 'VIP',           'RTX 4080, кресло Cougar, отдельная зона',    'vip',      1500, 1, 8, 3),
+  ('aaaaaaaa-0000-0000-0000-000000000004', 'PlayStation 5', 'Консоль с двумя геймпадами и диваном',       'console',  2000, 1, 6, 4)
+on conflict (id) do nothing;
+
+
+-- ------------------------------------------------------------
+--  Залы, тарифы и занятость
+-- ------------------------------------------------------------
+
+create or replace function booking_config()
+returns json
+language sql
+as $$
+  select json_build_object(
+    'halls', (
+      select coalesce(json_agg(h order by h.sort_order), '[]'::json)
+        from (select id, name, subtitle, sort_order from halls where enabled) h
+    ),
+    'packages', (
+      select coalesce(json_agg(p order by p.sort_order), '[]'::json)
+        from (select id, name, description, zone, price_per_hour, min_hours, max_hours, sort_order
+                from packages where enabled) p
+    ),
+    'currency', (select currency from settings where id = 1)
+  );
+$$;
+
+
+-- Схема зала на конкретный промежуток. Занятость считается здесь же:
+-- отдавать клиенту все брони и сравнивать их в браузере значило бы
+-- показывать одному клиенту чужие визиты.
+create or replace function booking_layout(p_hall_id uuid, p_from timestamptz, p_to timestamptz)
+returns json
+language sql
+as $$
+  select coalesce(json_agg(t order by t.row_no, t.col_no), '[]'::json)
+    from (
+      select s.id, s.label, s.row_no, s.col_no, s.zone,
+             exists (
+               select 1 from bookings b
+                where b.seat_id = s.id
+                  and b.status = 'confirmed'
+                  and b.period && tstzrange(p_from, p_to, '[)')
+             ) as busy
+        from seats s
+       where s.hall_id = p_hall_id and s.enabled
+    ) t;
+$$;
+
+
+-- ------------------------------------------------------------
+--  Создание брони
+--
+--  Пересечение по времени ловится не проверкой, а ограничением базы:
+--  два одновременных запроса оба увидели бы место свободным. Здесь
+--  второй получит exclusion_violation и вежливый отказ.
+-- ------------------------------------------------------------
+
+create or replace function create_booking(
+  p_user_id bigint,
+  p_seat_id uuid,
+  p_package_id uuid,
+  p_starts_at timestamptz,
+  p_hours int
+)
+returns json
+language plpgsql
+as $$
+declare
+  v_seat    record;
+  v_pack    record;
+  v_hours   int;
+  v_ends    timestamptz;
+  v_price   numeric(10,2);
+  v_code    text;
+  v_id      uuid;
+begin
+  if (select blocked from users where id = p_user_id) then
+    return json_build_object('error', 'blocked');
+  end if;
+
+  select s.*, h.name as hall_name into v_seat
+    from seats s join halls h on h.id = s.hall_id
+   where s.id = p_seat_id and s.enabled and h.enabled;
+
+  if not found then
+    return json_build_object('error', 'seat_not_found');
+  end if;
+
+  select * into v_pack from packages where id = p_package_id and enabled;
+
+  if not found then
+    return json_build_object('error', 'package_not_found');
+  end if;
+
+  -- Тариф VIP на обычном месте — это не каприз интерфейса, а расхождение
+  -- в деньгах, поэтому проверяется на сервере.
+  if v_pack.zone is not null and v_pack.zone <> v_seat.zone then
+    return json_build_object('error', 'package_zone_mismatch');
+  end if;
+
+  v_hours := greatest(v_pack.min_hours, least(v_pack.max_hours, coalesce(p_hours, 1)));
+  v_ends  := p_starts_at + make_interval(hours => v_hours);
+
+  if p_starts_at < now() - interval '5 minutes' then
+    return json_build_object('error', 'in_the_past');
+  end if;
+
+  if p_starts_at > now() + interval '14 days' then
+    return json_build_object('error', 'too_far');
+  end if;
+
+  v_price := v_pack.price_per_hour * v_hours;
+  v_code  := 'NB-' || upper(encode(gen_random_bytes(4), 'hex'));
+
+  begin
+    insert into bookings (user_id, seat_id, package_id, code, starts_at, ends_at, hours, price)
+    values (p_user_id, p_seat_id, p_package_id, v_code, p_starts_at, v_ends, v_hours, v_price)
+    returning id into v_id;
+  exception
+    when exclusion_violation then
+      return json_build_object('error', 'seat_taken');
+  end;
+
+  insert into events (type, user_id, code) values ('booking', p_user_id, v_code);
+
+  -- Возвращаем всё, что нужно для уведомления администратору, одним
+  -- ответом: собирать это отдельными запросами из Node значило бы
+  -- четыре лишних обращения к базе на каждую бронь.
+  return json_build_object(
+    'id', v_id,
+    'code', v_code,
+    'hall', v_seat.hall_name,
+    'seat', v_seat.label,
+    'zone', v_seat.zone,
+    'package', v_pack.name,
+    'startsAt', p_starts_at,
+    'endsAt', v_ends,
+    'hours', v_hours,
+    'price', v_price,
+    'client', json_build_object(
+      'id', p_user_id,
+      'name', (select coalesce(first_name, 'Клиент') from users where id = p_user_id),
+      'username', (select username from users where id = p_user_id),
+      'phone', (select phone from users where id = p_user_id)
+    )
+  );
+end;
+$$;
+
+
+create or replace function my_bookings(p_user_id bigint, p_limit int default 20)
+returns json
+language sql
+as $$
+  select coalesce(json_agg(t order by t.starts_at desc), '[]'::json)
+    from (
+      select b.id, b.code, b.starts_at, b.ends_at, b.hours, b.price, b.status,
+             s.label as seat, s.zone, h.name as hall, p.name as package
+        from bookings b
+        join seats s    on s.id = b.seat_id
+        join halls h    on h.id = s.hall_id
+        join packages p on p.id = b.package_id
+       where b.user_id = p_user_id
+       order by b.starts_at desc
+       limit greatest(1, coalesce(p_limit, 20))
+    ) t;
+$$;
+
+
+-- Отменить можно только свою бронь и только до начала: после начала
+-- место уже занято физически, и отмена задним числом ломала бы отчёт.
+create or replace function cancel_booking(p_id uuid, p_user_id bigint)
+returns json
+language plpgsql
+as $$
+declare
+  v_code text;
+begin
+  update bookings
+     set status = 'cancelled', cancelled_at = now()
+   where id = p_id
+     and user_id = p_user_id
+     and status = 'confirmed'
+     and starts_at > now()
+  returning code into v_code;
+
+  if not found then
+    return json_build_object('error', 'cannot_cancel');
+  end if;
+
+  insert into events (type, user_id, code) values ('booking_cancel', p_user_id, v_code);
+  return json_build_object('ok', true, 'code', v_code);
+end;
+$$;
+
+
+-- Лента броней для стойки и кабинета. Сотруднику нужен ближайший день,
+-- владельцу — картина за период, поэтому окно задаётся аргументами.
+create or replace function admin_bookings(p_from timestamptz, p_to timestamptz)
+returns json
+language sql
+as $$
+  select coalesce(json_agg(t order by t.starts_at), '[]'::json)
+    from (
+      select b.id, b.code, b.starts_at, b.ends_at, b.hours, b.price, b.status,
+             s.label as seat, s.zone, h.name as hall, p.name as package,
+             u.id as client_id, u.first_name, u.username, u.phone
+        from bookings b
+        join seats s    on s.id = b.seat_id
+        join halls h    on h.id = s.hall_id
+        join packages p on p.id = b.package_id
+        join users u    on u.id = b.user_id
+       where b.starts_at >= p_from and b.starts_at < p_to
+    ) t;
+$$;
+
+notify pgrst, 'reload schema';

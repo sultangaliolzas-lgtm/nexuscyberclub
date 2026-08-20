@@ -30,6 +30,8 @@
    "result", "resultIcon", "resultTitle", "resultSub", "resultCode",
    "spinBtn", "hint", "inventoryList", "inventoryEmpty", "historyBlock", "historyList",
    "notifyNotice", "notifyEnable",
+   "hallNav", "hallSubtitle", "dayNav", "timeSlots", "hoursNav",
+   "hallMap", "bookSummary", "myBookings",
    "unreachFoot", "unreachList",
    "menuBind", "menuClear", "menuResult", "kbClear", "kbResult",
    "tabs", "adminNav", "periodNav", "statTiles", "funnelTable", "funnelFoot",
@@ -42,7 +44,7 @@
    "castProgress", "castBar", "castProgressFoot", "castList",
    "castPhoto", "castPhotoBtn", "castPhotoPreview", "castPhotoImg",
    "castPhotoRemove", "castLimit",
-   "deskCode", "deskSubmit", "deskScan", "deskResult", "deskLog", "deskHint",
+   "deskCode", "deskSubmit", "deskScan", "deskResult", "deskLog", "deskHint", "deskBookings",
    "toast"].forEach(function (id) { el[id] = document.getElementById(id); });
 
   boot();
@@ -233,10 +235,12 @@
     document.querySelectorAll(".tab").forEach(function (b) {
       b.classList.toggle("active", b.dataset.tab === tab);
     });
-    ["wheel", "inventory", "desk", "admin"].forEach(function (name) {
+    ["wheel", "inventory", "booking", "desk", "admin"].forEach(function (name) {
       document.getElementById("view-" + name).hidden = name !== tab;
     });
     if (tab === "admin") loadAdmin();
+    if (tab === "booking") loadBooking();
+    if (tab === "desk") loadDeskBookings();
     window.scrollTo(0, 0);
   }
 
@@ -960,6 +964,559 @@
     return pad(d.getHours()) + ":" + pad(d.getMinutes());
   }
 
+  /* ============================================================ бронирование */
+
+  // Клуб работает с 10 утра; последняя бронь начинается в 23:00.
+  // Позже это переедет в настройки — сейчас важнее показать сам ход.
+  var OPEN_HOUR = 10;
+  var LAST_HOUR = 23;
+  var DAYS_AHEAD = 4;
+  var HOUR_OPTIONS = [1, 2, 3, 4, 5, 6];
+
+  var booking = {
+    config: null,
+    hallId: null,
+    dayOffset: 0,
+    startHour: null,
+    hours: 2,
+    seat: null,
+    packageId: null
+  };
+
+  function loadBooking() {
+    if (booking.config) {
+      renderDays();
+      refreshLayout();
+      loadMyBookings();
+      return;
+    }
+
+    el.hallMap.innerHTML = '<p class="skeleton">Загружаем залы...</p>';
+
+    api("/api/booking?r=config")
+      .then(function (data) {
+        booking.config = data;
+        booking.hallId = data.halls.length ? data.halls[0].id : null;
+        state.currency = data.currency || state.currency;
+
+        renderHalls();
+        renderDays();
+        renderHours();
+        refreshLayout();
+        loadMyBookings();
+      })
+      .catch(function (err) {
+        el.hallMap.innerHTML = "";
+        el.hallMap.appendChild(fill("skeleton", "Не удалось загрузить: " + err.message));
+      });
+  }
+
+  function renderHalls() {
+    el.hallNav.innerHTML = "";
+
+    booking.config.halls.forEach(function (hall) {
+      var btn = document.createElement("button");
+      btn.className = "seg" + (hall.id === booking.hallId ? " active" : "");
+      btn.type = "button";
+      btn.textContent = hall.name;
+
+      btn.addEventListener("click", function () {
+        booking.hallId = hall.id;
+        booking.seat = null;
+        markActive(el.hallNav, btn);
+        renderHallSubtitle();
+        refreshLayout();
+      });
+
+      el.hallNav.appendChild(btn);
+    });
+
+    renderHallSubtitle();
+  }
+
+  function renderHallSubtitle() {
+    var hall = currentHall();
+    el.hallSubtitle.textContent = hall && hall.subtitle ? hall.subtitle : "";
+  }
+
+  function currentHall() {
+    var found = null;
+    (booking.config ? booking.config.halls : []).forEach(function (h) {
+      if (h.id === booking.hallId) found = h;
+    });
+    return found;
+  }
+
+  function renderDays() {
+    el.dayNav.innerHTML = "";
+
+    for (var i = 0; i < DAYS_AHEAD; i += 1) {
+      (function (offset) {
+        var btn = document.createElement("button");
+        btn.className = "seg" + (offset === booking.dayOffset ? " active" : "");
+        btn.type = "button";
+        btn.textContent = dayLabel(offset);
+
+        btn.addEventListener("click", function () {
+          booking.dayOffset = offset;
+          booking.startHour = null;
+          booking.seat = null;
+          markActive(el.dayNav, btn);
+          renderTimes();
+          refreshLayout();
+        });
+
+        el.dayNav.appendChild(btn);
+      })(i);
+    }
+
+    renderTimes();
+  }
+
+  function dayLabel(offset) {
+    if (offset === 0) return "Сегодня";
+    if (offset === 1) return "Завтра";
+
+    var date = new Date();
+    date.setDate(date.getDate() + offset);
+    return date.toLocaleDateString("ru-RU", { day: "numeric", month: "short" });
+  }
+
+  // Сегодняшние слоты начинаются со следующего часа: предлагать бронь
+  // на время, которое уже идёт, бессмысленно — сервер её всё равно
+  // отклонит как прошедшую.
+  function renderTimes() {
+    el.timeSlots.innerHTML = "";
+
+    var first = OPEN_HOUR;
+    if (booking.dayOffset === 0) {
+      first = Math.max(OPEN_HOUR, new Date().getHours() + 1);
+    }
+
+    if (first > LAST_HOUR) {
+      el.timeSlots.appendChild(fill("skeleton", "На сегодня время вышло — выберите завтра."));
+      booking.startHour = null;
+      return;
+    }
+
+    if (booking.startHour === null || booking.startHour < first) {
+      booking.startHour = first;
+    }
+
+    for (var h = first; h <= LAST_HOUR; h += 1) {
+      (function (hour) {
+        var btn = document.createElement("button");
+        btn.className = "slot" + (hour === booking.startHour ? " active" : "");
+        btn.type = "button";
+        btn.textContent = (hour < 10 ? "0" : "") + hour + ":00";
+
+        btn.addEventListener("click", function () {
+          booking.startHour = hour;
+          booking.seat = null;
+          markSlot(el.timeSlots, btn);
+          refreshLayout();
+        });
+
+        el.timeSlots.appendChild(btn);
+      })(h);
+    }
+  }
+
+  function renderHours() {
+    el.hoursNav.innerHTML = "";
+
+    HOUR_OPTIONS.forEach(function (n) {
+      var btn = document.createElement("button");
+      btn.className = "slot" + (n === booking.hours ? " active" : "");
+      btn.type = "button";
+      btn.textContent = n + " ч";
+
+      btn.addEventListener("click", function () {
+        booking.hours = n;
+        markSlot(el.hoursNav, btn);
+        refreshLayout();
+      });
+
+      el.hoursNav.appendChild(btn);
+    });
+  }
+
+  function markSlot(container, btn) {
+    container.querySelectorAll(".slot").forEach(function (b) { b.classList.remove("active"); });
+    if (btn) btn.classList.add("active");
+  }
+
+  function bookingStart() {
+    var date = new Date();
+    date.setDate(date.getDate() + booking.dayOffset);
+    date.setHours(booking.startHour, 0, 0, 0);
+    return date;
+  }
+
+  function refreshLayout() {
+    if (!booking.hallId || booking.startHour === null) return;
+
+    el.hallMap.innerHTML = '<p class="skeleton">Смотрим, что свободно...</p>';
+    renderSummary();
+
+    var start = bookingStart();
+
+    api("/api/booking?r=layout&hall=" + encodeURIComponent(booking.hallId) +
+        "&from=" + encodeURIComponent(start.toISOString()) +
+        "&hours=" + booking.hours)
+      .then(function (data) { renderMap(data.seats || []); })
+      .catch(function (err) {
+        el.hallMap.innerHTML = "";
+        el.hallMap.appendChild(fill("skeleton", "Не удалось загрузить схему: " + err.message));
+      });
+  }
+
+  function renderMap(seats) {
+    el.hallMap.innerHTML = "";
+
+    if (!seats.length) {
+      el.hallMap.appendChild(fill("skeleton", "В этом зале пока нет мест."));
+      return;
+    }
+
+    var head = document.createElement("div");
+    head.className = "hall-head";
+    el.hallMap.appendChild(head);
+    el.hallMap.appendChild(fill("hall-head-label", "СТОЙКА"));
+
+    // Раскладываем по рядам: сетка мест читается как схема помещения
+    // только пока ряды идут отдельными строками.
+    var rows = {};
+    var order = [];
+
+    seats.forEach(function (seat) {
+      if (!rows[seat.row_no]) { rows[seat.row_no] = []; order.push(seat.row_no); }
+      rows[seat.row_no].push(seat);
+    });
+
+    order.sort(function (a, b) { return a - b; });
+
+    order.forEach(function (rowNo) {
+      var row = document.createElement("div");
+      row.className = "hall-row";
+
+      rows[rowNo]
+        .sort(function (a, b) { return a.col_no - b.col_no; })
+        .forEach(function (seat) { row.appendChild(seatButton(seat)); });
+
+      el.hallMap.appendChild(row);
+    });
+  }
+
+  function seatButton(seat) {
+    var btn = document.createElement("button");
+    btn.type = "button";
+    btn.textContent = seat.label;
+    btn.className = "seat " + seat.zone +
+      (seat.busy ? " busy" : "") +
+      (booking.seat && booking.seat.id === seat.id ? " chosen" : "");
+
+    if (seat.busy) {
+      btn.disabled = true;
+      btn.title = "Занято на это время";
+      return btn;
+    }
+
+    btn.addEventListener("click", function () {
+      booking.seat = seat;
+      booking.packageId = null;
+      el.hallMap.querySelectorAll(".seat").forEach(function (b) { b.classList.remove("chosen"); });
+      btn.classList.add("chosen");
+      haptic("impact");
+      renderSummary();
+      el.bookSummary.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    });
+
+    return btn;
+  }
+
+  /* ---------------------------------------------------- итог и тарифы */
+
+  function packagesForSeat(seat) {
+    return (booking.config ? booking.config.packages : []).filter(function (p) {
+      return !p.zone || p.zone === seat.zone;
+    });
+  }
+
+  function renderSummary() {
+    el.bookSummary.innerHTML = "";
+
+    if (!booking.seat) {
+      el.bookSummary.hidden = true;
+      return;
+    }
+
+    el.bookSummary.hidden = false;
+
+    var box = document.createElement("div");
+    box.className = "summary";
+
+    var packs = packagesForSeat(booking.seat);
+    var fitting = packs.filter(function (p) {
+      return booking.hours >= p.min_hours && booking.hours <= p.max_hours;
+    });
+
+    if (!booking.packageId && fitting.length) booking.packageId = fitting[0].id;
+
+    packs.forEach(function (pack) {
+      box.appendChild(packButton(pack));
+    });
+
+    var chosen = null;
+    packs.forEach(function (p) { if (p.id === booking.packageId) chosen = p; });
+
+    box.appendChild(line("Место", currentHall().name + " · " + booking.seat.label));
+    box.appendChild(line("Когда", dayLabel(booking.dayOffset) + ", " +
+      pad(booking.startHour) + ":00 — " + pad((booking.startHour + booking.hours) % 24) + ":00"));
+    box.appendChild(line("Длительность", booking.hours + " ч"));
+
+    var total = document.createElement("div");
+    total.className = "summary-total";
+    total.appendChild(span("", "К оплате"));
+    var sum = document.createElement("b");
+    sum.textContent = chosen ? money(chosen.price_per_hour * booking.hours) : "—";
+    total.appendChild(sum);
+    box.appendChild(total);
+
+    var submit = document.createElement("button");
+    submit.className = "btn";
+    submit.type = "button";
+    submit.textContent = "Забронировать";
+    submit.disabled = !chosen;
+    submit.addEventListener("click", function () { submitBooking(submit); });
+    box.appendChild(submit);
+
+    box.appendChild(fill("foot", chosen
+      ? "Оплата на стойке при посадке. Онлайн-оплата через Kaspi или Apple Pay подключается на этом шаге."
+      : "Для этого места нет тарифа на выбранное количество часов — измените длительность."));
+
+    el.bookSummary.appendChild(box);
+  }
+
+  function packButton(pack) {
+    var fits = booking.hours >= pack.min_hours && booking.hours <= pack.max_hours;
+
+    var btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "pack" + (pack.id === booking.packageId ? " active" : "");
+    btn.disabled = !fits;
+
+    var name = document.createElement("div");
+    name.className = "pack-name";
+    name.appendChild(document.createTextNode(pack.name));
+    name.appendChild(span("", money(pack.price_per_hour) + " / час"));
+    btn.appendChild(name);
+
+    btn.appendChild(fill("pack-desc", fits
+      ? (pack.description || "")
+      : "от " + pack.min_hours + " до " + pack.max_hours + " ч"));
+
+    if (fits) {
+      btn.addEventListener("click", function () {
+        booking.packageId = pack.id;
+        renderSummary();
+      });
+    }
+
+    return btn;
+  }
+
+  function line(label, value) {
+    var row = document.createElement("div");
+    row.className = "summary-line";
+    row.appendChild(span("", label));
+    var b = document.createElement("b");
+    b.textContent = value;
+    row.appendChild(b);
+    return row;
+  }
+
+  function pad(n) { return (n < 10 ? "0" : "") + n; }
+
+  /* ---------------------------------------------------- отправка и мои брони */
+
+  function submitBooking(button) {
+    button.disabled = true;
+    button.textContent = "Бронируем...";
+
+    api("/api/booking?r=create", {
+      method: "POST",
+      body: {
+        seatId: booking.seat.id,
+        packageId: booking.packageId,
+        startsAt: bookingStart().toISOString(),
+        hours: booking.hours
+      }
+    })
+      .then(function (res) {
+        var b = res.booking;
+        booking.seat = null;
+        booking.packageId = null;
+
+        toast("Место " + b.seat + " забронировано");
+        haptic("success");
+
+        renderSummary();
+        refreshLayout();
+        loadMyBookings();
+      })
+      .catch(function (err) {
+        // Место могли занять, пока клиент выбирал тариф: сервер отдаёт
+        // человеческую формулировку, и схему нужно перечитать — иначе
+        // он снова ткнёт в то же место.
+        toast(err.message, true);
+        if (err.status === 409) refreshLayout();
+      })
+      .then(function () {
+        button.disabled = false;
+        button.textContent = "Забронировать";
+      });
+  }
+
+  function loadMyBookings() {
+    api("/api/booking?r=mine")
+      .then(function (data) { renderMyBookings(data.bookings || []); })
+      .catch(function () {
+        el.myBookings.innerHTML = "";
+      });
+  }
+
+  var BOOKING_STATUS = {
+    confirmed: "активна",
+    cancelled: "отменена",
+    done: "состоялась",
+    no_show: "не пришёл"
+  };
+
+  function renderMyBookings(list) {
+    el.myBookings.innerHTML = "";
+
+    if (!list.length) {
+      el.myBookings.appendChild(fill("skeleton", "Броней пока нет."));
+      return;
+    }
+
+    list.forEach(function (b) {
+      var starts = new Date(b.starts_at);
+      var future = starts.getTime() > Date.now();
+      var active = b.status === "confirmed";
+
+      var li = document.createElement("li");
+      li.className = "card" + (active ? "" : " muted");
+
+      li.appendChild(row(
+        b.zone === "console" ? "🎮" : (b.zone === "vip" ? "👑" : "🖥"),
+        b.hall + " · " + b.seat,
+        b.package + " · " + b.hours + " ч · " + money(b.price),
+        span(active && future ? "soon" : "", whenLabel(starts, b.ends_at))
+      ));
+
+      if (!active) {
+        li.appendChild(fill("card-hint", BOOKING_STATUS[b.status] || b.status));
+      } else if (future) {
+        var cancel = document.createElement("button");
+        cancel.className = "btn danger";
+        cancel.type = "button";
+        cancel.textContent = "Отменить";
+        cancel.style.marginTop = "10px";
+
+        cancel.addEventListener("click", function () {
+          askConfirm("Отменить бронь на " + b.seat + "?", function () {
+            cancel.disabled = true;
+            api("/api/booking?r=cancel", { method: "POST", body: { id: b.id } })
+              .then(function () {
+                toast("Бронь отменена");
+                loadMyBookings();
+                refreshLayout();
+              })
+              .catch(function (err) {
+                toast(err.message, true);
+                cancel.disabled = false;
+              });
+          });
+        });
+
+        li.appendChild(cancel);
+      } else {
+        li.appendChild(fill("card-hint", "код " + b.code));
+      }
+
+      el.myBookings.appendChild(li);
+    });
+  }
+
+  // "Сегодня 18:00 — 21:00" вместо двух полных дат: клиент смотрит на
+  // этот список, чтобы вспомнить, когда ему идти, а не чтобы читать год.
+  function whenLabel(starts, endsIso) {
+    var ends = new Date(endsIso);
+    var today = new Date();
+    var tomorrow = new Date();
+    tomorrow.setDate(tomorrow.getDate() + 1);
+
+    var prefix;
+    if (sameDay(starts, today)) prefix = "Сегодня";
+    else if (sameDay(starts, tomorrow)) prefix = "Завтра";
+    else prefix = starts.toLocaleDateString("ru-RU", { day: "numeric", month: "short" });
+
+    return prefix + " " + pad(starts.getHours()) + ":00 — " + pad(ends.getHours()) + ":00";
+  }
+
+  function sameDay(a, b) {
+    return a.getFullYear() === b.getFullYear() &&
+           a.getMonth() === b.getMonth() &&
+           a.getDate() === b.getDate();
+  }
+
+  /* ---------------------------------------------------- брони на стойке */
+
+  // Сотрудник должен видеть, какие места забронированы, до того как
+  // посадит гостя. Пока расписание живёт у нас, а не в системе клуба,
+  // этот экран — единственное, что защищает бронь от случайной посадки.
+  function loadDeskBookings() {
+    el.deskBookings.innerHTML = '<p class="skeleton">Загружаем...</p>';
+
+    api("/api/booking?r=desk&days=1")
+      .then(function (data) {
+        var list = (data.bookings || []).filter(function (b) { return b.status === "confirmed"; });
+        el.deskBookings.innerHTML = "";
+
+        if (!list.length) {
+          el.deskBookings.appendChild(fill("skeleton", "На сегодня броней нет."));
+          return;
+        }
+
+        list.forEach(function (b) {
+          var starts = new Date(b.starts_at);
+          var soon = starts.getTime() - Date.now() < 2 * 3600000;
+
+          var who = [b.first_name, b.username ? "@" + b.username : null, b.phone]
+            .filter(Boolean).join(" · ");
+
+          var li = document.createElement("li");
+          li.className = "card";
+
+          li.appendChild(row(
+            b.zone === "console" ? "🎮" : (b.zone === "vip" ? "👑" : "🖥"),
+            b.hall + " · " + b.seat,
+            who || ("ID " + b.client_id),
+            span(soon ? "soon" : "", pad(starts.getHours()) + ":00 · " + b.hours + " ч")
+          ));
+
+          li.appendChild(fill("card-hint", b.package + " · " + money(b.price) + " · код " + b.code));
+          el.deskBookings.appendChild(li);
+        });
+      })
+      .catch(function (err) {
+        el.deskBookings.innerHTML = "";
+        el.deskBookings.appendChild(fill("skeleton", "Не удалось загрузить: " + err.message));
+      });
+  }
+
   /* ============================================================ кабинет владельца */
 
   // Отчёт перечитываем при каждом открытии вкладки: владелец смотрит
@@ -1230,7 +1787,9 @@
     checkin: "визит по QR",
     spin: "прокрут",
     redeem: "погашен код",
-    grant: "начислен прокрут вручную"
+    grant: "начислен прокрут вручную",
+    booking: "бронь места",
+    booking_cancel: "бронь отменена"
   };
 
   function renderActivity(items) {
@@ -1259,6 +1818,8 @@
     if (type === "checkin") return "📲";
     if (type === "spin") return "🎰";
     if (type === "redeem") return "✅";
+    if (type === "booking") return "📅";
+    if (type === "booking_cancel") return "🚫";
     return "➕";
   }
 

@@ -929,3 +929,189 @@ body {
 #unreachFoot:empty { display: none; }
 
 #kbResult:empty { display: none; }
+
+/* ==================================================== бронирование */
+
+/* Ряды часов и времени не помещаются в ширину экрана, а переносить их
+   нельзя: строка «10:00 11:00 12:00…» читается как шкала только пока
+   она одна. Поэтому горизонтальная прокрутка. */
+.slots {
+  display: flex;
+  gap: 7px;
+  margin-bottom: 14px;
+  padding-bottom: 4px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.slots::-webkit-scrollbar { display: none; }
+
+.slot {
+  flex: 0 0 auto;
+  padding: 9px 14px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: var(--card);
+  color: var(--dim);
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.slot.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #0b0c10;
+}
+
+.slot:disabled { opacity: 0.35; cursor: default; }
+
+.hall {
+  padding: 18px 12px 14px;
+  border-radius: var(--radius);
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+}
+
+/* Полоса сверху задаёт залу «перёд»: без неё сетка мест не читается как
+   схема помещения и клиент не понимает, где он окажется. */
+.hall-head {
+  margin: 0 auto 6px;
+  width: 66%;
+  height: 5px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, transparent, var(--accent), transparent);
+  opacity: 0.55;
+}
+
+.hall-head-label {
+  margin-bottom: 16px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 2px;
+  color: var(--dim);
+  text-align: center;
+}
+
+.hall-row {
+  display: flex;
+  justify-content: center;
+  gap: 7px;
+  margin-bottom: 7px;
+}
+
+.seat {
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: var(--card);
+  color: var(--text);
+  font-size: 11px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.seat.standard { border-color: rgba(166, 255, 47, 0.35); }
+.seat.vip      { border-color: rgba(255, 210, 63, 0.55); color: #ffd23f; }
+.seat.console  { border-color: rgba(49, 208, 255, 0.55); color: #31d0ff; }
+
+.seat.busy {
+  opacity: 0.25;
+  cursor: not-allowed;
+  border-color: var(--line);
+  color: var(--dim);
+}
+
+.seat.chosen {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #0b0c10;
+  box-shadow: 0 0 16px rgba(166, 255, 47, 0.45);
+}
+
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin: 11px 0 4px;
+  font-size: 11px;
+  color: var(--dim);
+}
+
+.legend span { display: flex; align-items: center; gap: 5px; }
+
+.legend .dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 3px;
+  border: 1px solid var(--line);
+}
+
+.legend .dot.free    { border-color: rgba(166, 255, 47, 0.6); }
+.legend .dot.vip     { border-color: rgba(255, 210, 63, 0.7); background: rgba(255, 210, 63, 0.2); }
+.legend .dot.console { border-color: rgba(49, 208, 255, 0.7); background: rgba(49, 208, 255, 0.2); }
+.legend .dot.busy    { background: var(--line); }
+
+/* Итог брони. Отдельная карточка, а не строка под схемой: это последний
+   экран перед списанием денег, и на нём должно быть видно всё сразу —
+   место, время, тариф и сумма. */
+.summary {
+  margin-top: 14px;
+  padding: 15px;
+  border-radius: var(--radius);
+  background: var(--card);
+  border: 1px solid var(--accent);
+}
+
+.summary-line {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+  font-size: 13px;
+  color: var(--dim);
+}
+
+.summary-line b { color: var(--text); font-weight: 700; text-align: right; }
+
+.summary-total {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin: 13px 0;
+  padding-top: 13px;
+  border-top: 1px solid var(--line);
+  font-size: 13px;
+  color: var(--dim);
+}
+
+.summary-total b { font-size: 21px; color: var(--accent); font-weight: 800; }
+
+.summary .btn { display: block; width: 100%; }
+
+.pack {
+  width: 100%;
+  margin-bottom: 7px;
+  padding: 11px 13px;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: var(--bg-2);
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.pack.active { border-color: var(--accent); }
+.pack:disabled { opacity: 0.4; cursor: default; }
+.pack-name { display: flex; justify-content: space-between; gap: 10px; font-size: 14px; font-weight: 700; }
+.pack-name span { color: var(--accent); white-space: nowrap; }
+.pack-desc { margin-top: 3px; font-size: 12px; color: var(--dim); }
+
+/* Пять вкладок в ряд помещаются только с уменьшенным кеглем. */
+.tabs .tab { font-size: 12px; padding-left: 4px; padding-right: 4px; }
+
+/* Прошедшие и отменённые брони приглушаются поштучно, а не всем списком:
+   в одном перечне соседствуют активные и завершённые. */
+.card.muted { opacity: 0.55; }
