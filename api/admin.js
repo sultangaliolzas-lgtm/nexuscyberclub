@@ -1,7 +1,7 @@
 const db = require("../lib/db");
 const { requireOwner, methodGuard } = require("../lib/guard");
 const { runReminders, sendBroadcastBatch } = require("../lib/notify");
-const { uploadPhoto, setMenuButton, getMenuButton, CAPTION_LIMIT } = require("../lib/telegram");
+const { uploadPhoto, setMenuButton, getMenuButton, removeKeyboard, CAPTION_LIMIT } = require("../lib/telegram");
 
 // Весь кабинет владельца — одна serverless-функция с раздельными
 // обработчиками. Держать по файлу на раздел было бы аккуратнее, но
@@ -22,6 +22,7 @@ const ROUTES = {
   broadcast:{ methods: ["GET", "POST", "PATCH"],    handler: broadcast },
   photo:    { methods: ["POST"],                    handler: photo },
   menu:     { methods: ["GET", "POST"],             handler: menu },
+  keyboard: { methods: ["POST"],                    handler: keyboard },
   export:   { methods: ["POST"],                    handler: exportCsv }
 };
 
@@ -453,6 +454,23 @@ async function menu(req, res, auth) {
     button: common.ok ? common.button : null,
     chatButton: mine.ok ? mine.button : null
   });
+}
+
+/* ------------------------------------------------------ нижняя клавиатура */
+
+// Клавиатура под полем ввода — не то же самое, что кнопка меню. Её
+// когда-то прислал бот, и она остаётся в чате навсегда, пока её явно не
+// снимут. Адрес внутри такой кнопки заморожен на момент отправки,
+// поэтому старая клавиатура открывает давно мёртвый деплой.
+async function keyboard(req, res, auth) {
+  const result = await removeKeyboard(auth.user.id, "Нижняя клавиатура убрана.");
+
+  if (!result.ok) {
+    res.status(502).json({ error: "telegram_error", reason: result.error });
+    return;
+  }
+
+  res.status(200).json({ ok: true });
 }
 
 /* ---------------------------------------------------------- картинка */

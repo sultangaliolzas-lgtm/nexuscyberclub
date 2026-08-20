@@ -31,7 +31,7 @@
    "spinBtn", "hint", "inventoryList", "inventoryEmpty", "historyBlock", "historyList",
    "notifyNotice", "notifyEnable",
    "unreachFoot", "unreachList",
-   "menuBind", "menuClear", "menuResult",
+   "menuBind", "menuClear", "menuResult", "kbClear", "kbResult",
    "tabs", "adminNav", "periodNav", "statTiles", "funnelTable", "funnelFoot",
    "todayTiles", "chart", "liability", "clientSort", "exportNav", "exportBtn", "configLog",
    "outstandingList", "outstandingFoot", "sourcesList", "activityList",
@@ -220,6 +220,7 @@
     el.notifyEnable.addEventListener("click", enableNotifications);
     el.menuBind.addEventListener("click", function () { setBotMenu(true); });
     el.menuClear.addEventListener("click", function () { setBotMenu(false); });
+    el.kbClear.addEventListener("click", clearBotKeyboard);
     el.castPhoto.addEventListener("change", attachPhoto);
     el.castPhotoRemove.addEventListener("click", clearPhoto);
   }
@@ -2078,6 +2079,20 @@
     if (a.type !== b.type) return false;
     if (a.type !== "web_app") return true;
     return ((a.web_app && a.web_app.url) || "") === ((b.web_app && b.web_app.url) || "");
+  }
+
+  function clearBotKeyboard() {
+    el.kbClear.disabled = true;
+    el.kbResult.textContent = "Убираем...";
+
+    api("/api/admin?r=keyboard", { method: "POST" })
+      .then(function () {
+        el.kbResult.textContent = "Готово — бот прислал подтверждение в чат, клавиатура снята. " +
+          "У клиентов она уберётся сама, когда они в следующий раз напишут боту /start.";
+        haptic("success");
+      })
+      .catch(function (err) { el.kbResult.textContent = "Ошибка: " + err.message; })
+      .then(function () { el.kbClear.disabled = false; });
   }
 
   function setBotMenu(enabled) {

@@ -927,3 +927,5 @@ body {
 #menuResult:empty,
 #remindResult:empty,
 #unreachFoot:empty { display: none; }
+
+#kbResult:empty { display: none; }
