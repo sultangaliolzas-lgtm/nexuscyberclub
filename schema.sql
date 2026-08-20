@@ -1245,6 +1245,43 @@ end;
 $$;
 
 
+-- ------------------------------------------------------------
+--  Клиенты, которым бот писать не может
+--
+--  Telegram запрещает боту писать первым, пока человек сам не начал
+--  переписку. Владельцу важно видеть не только их количество, но и кто
+--  это: у половины из них на руках призы, которые сгорят без
+--  предупреждения, а телефон позволяет позвонить.
+-- ------------------------------------------------------------
+
+create or replace function unreachable_clients(p_limit int default 60)
+returns json
+language sql
+as $$
+  select coalesce(json_agg(t), '[]'::json) from (
+    select u.id,
+           u.first_name,
+           u.username,
+           u.phone,
+           u.last_checkin_at,
+           u.visits_total,
+           (select count(*) from inventory i
+             where i.user_id = u.id
+               and i.status = 'unused'
+               and i.expires_at > now()) as holding
+      from users u
+     where not u.can_message
+       and not u.blocked
+     order by (select count(*) from inventory i
+                where i.user_id = u.id
+                  and i.status = 'unused'
+                  and i.expires_at > now()) desc,
+              u.last_checkin_at desc nulls last
+     limit greatest(1, coalesce(p_limit, 60))
+  ) t;
+$$;
+
+
 create or replace function list_broadcasts(p_limit int default 20)
 returns json
 language sql

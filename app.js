@@ -28,7 +28,9 @@
   ["clubName", "banner", "strip", "burst", "reelFrame", "timer", "timerValue", "prizeDot",
    "result", "resultIcon", "resultTitle", "resultSub", "resultCode",
    "spinBtn", "hint", "inventoryList", "inventoryEmpty", "historyBlock", "historyList",
-   "notifyNotice", "notifyLink",
+   "notifyNotice", "notifyEnable",
+   "unreachFoot", "unreachList",
+   "menuBind", "menuClear", "menuResult",
    "tabs", "adminNav", "periodNav", "statTiles", "funnelTable", "funnelFoot",
    "todayTiles", "chart", "liability", "clientSort", "exportNav", "exportBtn", "configLog",
    "outstandingList", "outstandingFoot", "sourcesList", "activityList",
@@ -214,6 +216,9 @@
     el.remindNow.addEventListener("click", remindNow);
 
     el.castText.addEventListener("input", updateCastLimit);
+    el.notifyEnable.addEventListener("click", enableNotifications);
+    el.menuBind.addEventListener("click", function () { setBotMenu(true); });
+    el.menuClear.addEventListener("click", function () { setBotMenu(false); });
     el.castPhoto.addEventListener("change", attachPhoto);
     el.castPhotoRemove.addEventListener("click", clearPhoto);
   }
@@ -591,9 +596,48 @@
   // разрешения не даёт — поэтому тем, у кого есть что терять, показываем
   // прямой путь включить напоминания.
   function renderNotifyNotice() {
-    var needed = !state.canMessage && state.botLink && state.items.length > 0;
-    el.notifyNotice.hidden = !needed;
-    if (needed) el.notifyLink.href = state.botLink;
+    el.notifyNotice.hidden = state.canMessage || state.items.length === 0;
+  }
+
+  // requestWriteAccess показывает системное окно Telegram прямо поверх
+  // приложения: клиенту не нужно уходить в чат и искать там /start.
+  // Метод появился в Bot API 6.9 — на старых клиентах остаётся запасной
+  // путь через открытие чата с ботом.
+  function enableNotifications() {
+    if (tg && tg.requestWriteAccess) {
+      el.notifyEnable.disabled = true;
+
+      tg.requestWriteAccess(function (granted) {
+        if (!granted) {
+          el.notifyEnable.disabled = false;
+          return;
+        }
+        confirmNotifications();
+      });
+      return;
+    }
+
+    if (!state.botLink) return;
+    if (tg && tg.openTelegramLink) tg.openTelegramLink(state.botLink);
+    else window.open(state.botLink, "_blank");
+  }
+
+  // Сервер не верит на слово: он пробует отправить сообщение и по факту
+  // доставки решает, достижим клиент или нет.
+  function confirmNotifications() {
+    api("/api/notify", { method: "POST" })
+      .then(function (res) {
+        if (!res.ok) {
+          toast("Не вышло. Откройте чат с ботом и нажмите «Начать»", true);
+          return;
+        }
+        state.canMessage = true;
+        renderNotifyNotice();
+        toast("Напоминания включены");
+        haptic("success");
+      })
+      .catch(function (err) { toast("Ошибка: " + err.message, true); })
+      .then(function () { el.notifyEnable.disabled = false; });
   }
 
   function prizeCard(item, done) {
@@ -1703,6 +1747,7 @@
       .then(function (data) {
         castSizes = data.audiences || {};
         renderAudienceFoot();
+        renderUnreachable(data.unreachable || []);
         renderCastHistory(data.broadcasts || []);
       })
       .catch(function (err) {
@@ -1937,6 +1982,64 @@
     el.castBar.style.width = pct + "%";
     el.castProgressFoot.textContent = "Отправлено " + done + " из " + total +
       (p.failed ? " · не дошло: " + p.failed : "");
+  }
+
+  // Одного числа мало: владельцу нужно знать, у кого именно из
+  // недостижимых лежат призы — их сгорание он не сможет предупредить
+  // ничем, кроме звонка.
+  function renderUnreachable(list) {
+    el.unreachList.innerHTML = "";
+
+    if (!list.length) {
+      el.unreachFoot.textContent = "Таких нет: бот может написать каждому клиенту.";
+      return;
+    }
+
+    var withPrizes = 0;
+    list.forEach(function (c) { if (c.holding > 0) withPrizes += 1; });
+
+    el.unreachFoot.textContent =
+      "Всего " + list.length + ", с призами на руках: " + withPrizes + ". " +
+      "Их призы сгорят без предупреждения. Разрешение клиент даёт сам, и это один тап: " +
+      "открыть приложение, вкладка «Призы», кнопка «Включить напоминания» — выходить из приложения не нужно. " +
+      "Попросить об этом можно на стойке, а тем, у кого сохранён телефон, — позвонить.";
+
+    list.forEach(function (c) {
+      var sub = [];
+      if (c.username) sub.push("@" + c.username);
+      if (c.phone) sub.push(c.phone);
+      sub.push("визитов: " + (c.visits_total || 0));
+
+      var li = document.createElement("li");
+      li.className = "card";
+      li.appendChild(row(
+        c.holding > 0 ? "🎁" : "👤",
+        c.first_name || ("ID " + c.id),
+        sub.join(" · "),
+        c.holding > 0 ? span("soon", "призов: " + c.holding) : span("", "ID " + c.id)
+      ));
+
+      el.unreachList.appendChild(li);
+    });
+  }
+
+  function setBotMenu(enabled) {
+    el.menuBind.disabled = true;
+    el.menuClear.disabled = true;
+    el.menuResult.textContent = "Настраиваем...";
+
+    api("/api/admin?r=menu", { method: "POST", body: { enabled: enabled } })
+      .then(function (res) {
+        el.menuResult.textContent = res.enabled
+          ? "Готово: кнопка открывает " + res.url + ". В уже открытом чате она обновится не сразу — перезайдите в переписку с ботом."
+          : "Кнопка убрана, вместо неё в чате будет обычное меню команд.";
+        haptic("success");
+      })
+      .catch(function (err) { el.menuResult.textContent = "Ошибка: " + err.message; })
+      .then(function () {
+        el.menuBind.disabled = false;
+        el.menuClear.disabled = false;
+      });
   }
 
   function renderCastHistory(list) {

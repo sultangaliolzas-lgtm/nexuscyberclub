@@ -72,7 +72,7 @@
 
       <div class="notice" id="notifyNotice" hidden>
         <p>Бот не может тебе написать, поэтому напоминание о сгорании приза не придёт. Нажми — и напомним заранее.</p>
-        <a class="link-btn" id="notifyLink" href="#" target="_blank" rel="noopener">Включить напоминания</a>
+        <button class="btn" id="notifyEnable" type="button">Включить напоминания</button>
       </div>
 
       <h2 class="section-title">Готовы к получению</h2>
@@ -223,6 +223,10 @@
           <p class="foot" id="castProgressFoot"></p>
         </div>
 
+        <h2 class="section-title">Кому бот не может писать</h2>
+        <p class="foot" id="unreachFoot"></p>
+        <ul class="cards compact" id="unreachList"></ul>
+
         <h2 class="section-title">История рассылок</h2>
         <ul class="cards compact" id="castList"></ul>
       </div>
@@ -248,6 +252,12 @@
         <h2 class="section-title">QR-наклейки</h2>
         <p class="foot">Страница для печати наклеек с QR-кодом. Открывается в браузере.</p>
         <a class="link-btn" id="qrLink" href="/qr" target="_blank" rel="noopener">Открыть страницу печати</a>
+
+        <h2 class="section-title">Кнопка меню в чате бота</h2>
+        <p class="foot">Панель под полем ввода в переписке с ботом. Она настраивается один раз и хранится у Telegram, поэтому вбитый туда когда-то адрес продолжает открывать старую версию приложения даже после переезда.</p>
+        <button class="btn" id="menuBind" type="button">Привязать к этому приложению</button>
+        <button class="btn ghost" id="menuClear" type="button">Убрать кнопку совсем</button>
+        <p class="foot" id="menuResult"></p>
 
         <h2 class="section-title">История изменений</h2>
         <ul class="cards compact" id="configLog"></ul>

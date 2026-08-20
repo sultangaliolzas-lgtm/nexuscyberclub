@@ -1,7 +1,7 @@
 const db = require("../lib/db");
 const { requireOwner, methodGuard } = require("../lib/guard");
 const { runReminders, sendBroadcastBatch } = require("../lib/notify");
-const { uploadPhoto, CAPTION_LIMIT } = require("../lib/telegram");
+const { uploadPhoto, setMenuButton, CAPTION_LIMIT } = require("../lib/telegram");
 
 // Весь кабинет владельца — одна serverless-функция с раздельными
 // обработчиками. Держать по файлу на раздел было бы аккуратнее, но
@@ -21,6 +21,7 @@ const ROUTES = {
   remind:   { methods: ["POST"],                    handler: remind },
   broadcast:{ methods: ["GET", "POST", "PATCH"],    handler: broadcast },
   photo:    { methods: ["POST"],                    handler: photo },
+  menu:     { methods: ["POST"],                    handler: menu },
   export:   { methods: ["POST"],                    handler: exportCsv }
 };
 
@@ -46,7 +47,14 @@ module.exports = async function handler(req, res) {
     await route.handler(req, res, auth);
   } catch (err) {
     console.error("admin " + key + " error:", err);
-    res.status(500).json({ error: "internal_error" });
+
+    // Текст ошибки виден только владельцу и экономит час гадания:
+    // "internal_error" не отличает отсутствующую функцию в базе от
+    // упавшего Telegram.
+    res.status(500).json({
+      error: "internal_error",
+      reason: String(err.message || err).slice(0, 300)
+    });
   }
 };
 
@@ -332,11 +340,17 @@ async function remind(req, res) {
 // PATCH, пока не кончатся получатели, и рисует по ответам прогресс.
 async function broadcast(req, res, auth) {
   if (req.method === "GET") {
-    const [list, sizes] = await Promise.all([
+    const [list, sizes, unreachable] = await Promise.all([
       db.rpc("list_broadcasts", { p_limit: 20 }),
-      db.rpc("audience_sizes", {})
+      db.rpc("audience_sizes", {}),
+      db.rpc("unreachable_clients", { p_limit: 60 })
     ]);
-    res.status(200).json({ broadcasts: list || [], audiences: sizes || {} });
+
+    res.status(200).json({
+      broadcasts: list || [],
+      audiences: sizes || {},
+      unreachable: unreachable || []
+    });
     return;
   }
 
@@ -383,6 +397,31 @@ async function broadcast(req, res, auth) {
   }
 
   res.status(200).json(progress);
+}
+
+/* ---------------------------------------------------------- кнопка меню */
+
+// Кнопка под полем ввода в чате с ботом настраивается один раз и живёт
+// на стороне Telegram. Если её когда-то завели через BotFather со старым
+// адресом, она будет открывать старую версию приложения даже после
+// переезда — отсюда её можно переписать на текущий адрес или убрать.
+async function menu(req, res) {
+  const enable = !(req.body && req.body.enabled === false);
+  const url = process.env.WEBAPP_URL;
+
+  if (enable && !url) {
+    res.status(400).json({ error: "no_webapp_url" });
+    return;
+  }
+
+  const result = await setMenuButton(enable ? url : null, "Открыть рулетку");
+
+  if (!result.ok) {
+    res.status(502).json({ error: "telegram_error", reason: result.error });
+    return;
+  }
+
+  res.status(200).json({ ok: true, enabled: enable, url: enable ? url : null });
 }
 
 /* ---------------------------------------------------------- картинка */

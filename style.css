@@ -914,3 +914,16 @@ body {
 }
 
 #castLimit:empty { display: none; }
+
+/* Кнопки, лежащие прямо в разделе кабинета (не внутри .form), — во всю
+   ширину и с отступом друг от друга: иначе «Привязать» и «Убрать»
+   слипаются в одну полосу. */
+.pane > .btn {
+  display: block;
+  width: 100%;
+  margin-bottom: 9px;
+}
+
+#menuResult:empty,
+#remindResult:empty,
+#unreachFoot:empty { display: none; }
