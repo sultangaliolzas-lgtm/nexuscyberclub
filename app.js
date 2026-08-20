@@ -254,7 +254,7 @@
 
     var icon = document.createElement("div");
     icon.className = "ri-icon";
-    icon.textContent = sector.icon || "🎁";
+    icon.textContent = emoji(sector.icon || "🎁");
     card.appendChild(icon);
 
     var name = document.createElement("div");
@@ -491,7 +491,7 @@
       // Мгновенные призы срабатывают сразу и не попадают в инвентарь:
       // гасить на стойке нечего, кода у них нет.
       el.result.className = "result win";
-      el.resultIcon.textContent = prize.icon || "⚡";
+      el.resultIcon.textContent = emoji(prize.icon || "⚡");
       el.resultTitle.textContent = prize.title;
       el.resultSub.textContent = res.effect === "respin"
         ? "Прокрут вернулся — крути ещё раз прямо сейчас"
@@ -501,7 +501,7 @@
       burst(prize.color || "#a6ff2f", 22);
     } else {
       el.result.className = "result win";
-      el.resultIcon.textContent = prize.icon || "🎁";
+      el.resultIcon.textContent = emoji(prize.icon || "🎁");
       el.resultTitle.textContent = prize.title;
       el.resultSub.textContent = "Покажи код сотруднику на стойке · сгорает через " + until(prize.expiresAt);
       el.resultCode.textContent = prize.code;
@@ -621,7 +621,7 @@
     if (icon) {
       var ic = document.createElement("div");
       ic.className = "card-icon";
-      ic.textContent = icon;
+      ic.textContent = emoji(icon);
       wrap.appendChild(ic);
     }
 
@@ -653,6 +653,19 @@
     if (cls) node.className = cls;
     node.textContent = text;
     return node;
+  }
+
+  // Часть символов (секундомер, ярлык) по умолчанию рисуется чёрно-белым
+  // текстовым глифом: он уже и ниже цветного эмодзи, из-за чего иконки в
+  // списке выглядят разнокалиберными. U+FE0F просит у шрифта цветной
+  // вариант; для символов, которые и так цветные, он ничего не меняет.
+  // ASCII не трогаем — там цветная форма только испортит вид.
+  function emoji(ch) {
+    if (!ch) return "";
+    var cp = ch.codePointAt(0);
+    if (cp < 0x2000) return ch;
+    if (String.fromCodePoint(cp).length !== ch.length) return ch;
+    return ch + "\uFE0F";
   }
 
   function until(iso) {
@@ -1045,7 +1058,7 @@
       var rate = p.won > 0 ? Math.round((p.redeemed / p.won) * 100) : null;
       var tr = document.createElement("tr");
 
-      tr.appendChild(cell((p.icon || "🎁") + " " + (p.short_title || p.title || p.key), ""));
+      tr.appendChild(cell(emoji(p.icon || "🎁") + " " + (p.short_title || p.title || p.key), ""));
       tr.appendChild(cell(p.won, "num"));
       tr.appendChild(cell(p.redeemed, "num"));
       tr.appendChild(cell(p.outstanding, "num out"));
@@ -1197,7 +1210,7 @@
 
       var icon = document.createElement("div");
       icon.className = "card-icon";
-      icon.textContent = prize.icon || "🎁";
+      icon.textContent = emoji(prize.icon || "🎁");
       head.appendChild(icon);
 
       var name = document.createElement("div");
