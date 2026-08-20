@@ -70,6 +70,11 @@
     <!-- =========================== ИНВЕНТАРЬ =========================== -->
     <section id="view-inventory" class="view" hidden>
 
+      <div class="notice" id="notifyNotice" hidden>
+        <p>Бот не может тебе написать, поэтому напоминание о сгорании приза не придёт. Нажми — и напомним заранее.</p>
+        <a class="link-btn" id="notifyLink" href="#" target="_blank" rel="noopener">Включить напоминания</a>
+      </div>
+
       <h2 class="section-title">Готовы к получению</h2>
       <ul class="cards" id="inventoryList"></ul>
 
@@ -117,6 +122,7 @@
         <button class="seg active" data-pane="stats" type="button">Отчёт</button>
         <button class="seg" data-pane="prizes" type="button">Призы</button>
         <button class="seg" data-pane="clients" type="button">Клиенты</button>
+        <button class="seg" data-pane="comms" type="button">Связь</button>
         <button class="seg" data-pane="team" type="button">Клуб</button>
       </div>
 
@@ -178,6 +184,35 @@
         </div>
         <p class="foot" id="clientsFoot">Сверху те, кто был недавно.</p>
         <ul class="cards compact" id="clientsList"></ul>
+      </div>
+
+      <!-- связь: напоминания и рассылки -->
+      <div class="pane" id="pane-comms" hidden>
+
+        <h2 class="section-title">Напоминания о сгорании</h2>
+        <p class="foot">За сутки до сгорания приза бот сам пишет клиенту и вместе с напоминанием добавляет немного времени к сроку — чтобы человек успел дойти, а не махнул рукой.</p>
+        <div class="form" id="remindForm"></div>
+        <button class="btn ghost" id="remindNow" type="button">Отправить напоминания сейчас</button>
+        <p class="foot" id="remindResult"></p>
+
+        <h2 class="section-title">Массовая рассылка</h2>
+        <textarea id="castText" rows="5" maxlength="3500" placeholder="Например: в субботу турнир по CS2, призовой фонд 100 000 ₸. Запись на стойке."></textarea>
+        <div class="segmented small" id="castAudience">
+          <button class="seg active" data-aud="all" type="button">Все</button>
+          <button class="seg" data-aud="active" type="button">Активные</button>
+          <button class="seg" data-aud="lapsed" type="button">Пропали</button>
+          <button class="seg" data-aud="holding" type="button">С призом</button>
+        </div>
+        <p class="foot" id="castAudienceFoot">Считаем получателей...</p>
+        <button class="btn" id="castSend" type="button">Отправить рассылку</button>
+
+        <div id="castProgress" hidden>
+          <div class="progress"><span id="castBar"></span></div>
+          <p class="foot" id="castProgressFoot"></p>
+        </div>
+
+        <h2 class="section-title">История рассылок</h2>
+        <ul class="cards compact" id="castList"></ul>
       </div>
 
       <!-- клуб: настройки, персонал, QR -->

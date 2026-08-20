@@ -820,3 +820,69 @@ body {
 .toast.err { border-color: var(--danger); color: var(--danger); }
 
 .skeleton { color: var(--dim); font-size: 14px; text-align: center; padding: 26px 0; }
+
+/* ------------------------------------------------------- рассылки */
+
+#castText {
+  width: 100%;
+  min-width: 0;
+  margin-bottom: 11px;
+  padding: 12px;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: var(--bg-2);
+  color: var(--text);
+  font: inherit;
+  font-size: 15px;
+  line-height: 1.45;
+  resize: vertical;
+}
+
+#castText:focus { outline: none; border-color: var(--accent); }
+#castText::placeholder { color: var(--dim); }
+
+/* Прогресс отправки. Рассылка идёт партиями и на большой базе занимает
+   минуты — без полосы владелец решит, что приложение зависло. */
+.progress {
+  height: 8px;
+  margin-top: 12px;
+  border-radius: 999px;
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  overflow: hidden;
+}
+
+.progress span {
+  display: block;
+  width: 0;
+  height: 100%;
+  border-radius: 999px;
+  background: var(--accent);
+  transition: width 0.25s ease;
+}
+
+/* Подсказка про выключенные напоминания. Появляется только у тех, кому
+   бот действительно не может написать, и только когда есть что терять. */
+.notice {
+  margin-bottom: 14px;
+  padding: 14px;
+  border-radius: var(--radius);
+  background: var(--card);
+  border: 1px solid var(--warn);
+}
+
+.notice p {
+  margin: 0 0 11px;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--text);
+}
+
+/* Пятая вкладка кабинета и четыре аудитории рассылки не помещаются в
+   ряд на узком экране при базовом кегле — уменьшаем именно эти навигации,
+   а не все подряд. */
+#adminNav .seg,
+.segmented.small .seg {
+  font-size: 12px;
+  padding: 9px 3px;
+}

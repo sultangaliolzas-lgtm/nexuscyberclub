@@ -1,10 +1,9 @@
 const db = require("../lib/db");
 const { roleOf } = require("../lib/guard");
+const { sendMessage } = require("../lib/telegram");
 
 const BOT_TOKEN = process.env.BOT_TOKEN;
 const WEBAPP_URL = process.env.WEBAPP_URL;
-
-const TELEGRAM_API = "https://api.telegram.org/bot" + BOT_TOKEN;
 
 const ID_PATTERN = /^(\d{5,})(?:\s+(\d{1,2}))?$/;
 const USERNAME_PATTERN = /^(@[a-zA-Z0-9_]{5,})(?:\s+(\d{1,2}))?$/;
@@ -42,7 +41,11 @@ module.exports = async function handler(req, res) {
       await db.upsertUser({
         id: fromId,
         username: message.from.username || null,
-        first_name: message.from.first_name || null
+        first_name: message.from.first_name || null,
+        // Раз клиент сам написал боту, переписка открыта и бот может
+        // писать первым. Мини-апп, открытый по ссылке t.me/bot?startapp,
+        // такого разрешения не даёт, поэтому сигнал именно отсюда.
+        can_message: true
       });
 
       const role = await roleOf(fromId);
@@ -171,7 +174,8 @@ async function saveContact(message) {
       username: message.from.username || null,
       first_name: message.from.first_name || null,
       phone: contact.phone_number,
-      phone_at: new Date().toISOString()
+      phone_at: new Date().toISOString(),
+      can_message: true
     });
 
     await sendMessage(
@@ -248,17 +252,3 @@ function formatDate(iso) {
   return d.toLocaleString("ru-RU", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
 }
 
-async function sendMessage(chatId, text, replyMarkup) {
-  const resp = await fetch(TELEGRAM_API + "/sendMessage", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      chat_id: chatId,
-      text: text,
-      reply_markup: replyMarkup
-    })
-  });
-  if (!resp.ok) {
-    console.error("sendMessage failed:", await resp.text());
-  }
-}

@@ -130,6 +130,11 @@ insert into settings (id) values (1) on conflict (id) do nothing;
 alter table settings add column if not exists max_unused_prizes int not null default 5;
 alter table settings add column if not exists currency text not null default '₸';
 
+-- Часовой пояс клуба. Используется при форматировании времени в
+-- сообщениях клиентам: "успей до 21:30" должно означать 21:30 по
+-- местному времени, а не по UTC.
+alter table settings add column if not exists timezone text not null default 'Asia/Almaty';
+
 
 -- ------------------------------------------------------------
 --  Персонал. role: owner видит вкладку "Админ", staff — только бот.
@@ -908,4 +913,337 @@ alter table config_log enable row level security;
 
 -- PostgREST держит схему в кэше и не увидит новые функции, пока его
 -- не пнуть. На Supabase это обычно происходит само, но лишним не будет.
+notify pgrst, 'reload schema';
+
+
+-- ============================================================
+--  Уведомления клиентам
+-- ============================================================
+
+-- Бот не может написать первым тому, кто не разрешил ему переписку.
+-- Мини-апп, открытый по ссылке t.me/bot?startapp=..., такого разрешения
+-- сам по себе не даёт. Флаг приходит в подписанной initData как
+-- allows_write_to_pm и выставляется в true, когда клиент жмёт /start.
+alter table users add column if not exists can_message boolean not null default false;
+
+-- Отметка о том, что напоминание по этому призу уже уходило. Нужна
+-- именно в inventory, а не в отдельной таблице: одно напоминание на
+-- приз, и повтор невозможен даже при двойном запуске задачи.
+alter table inventory add column if not exists reminded_at timestamptz;
+
+-- Сколько минут срока подарили вместе с напоминанием. Хранится, чтобы
+-- в отчёте было видно реальную длину жизни кода, а не только исходную.
+alter table inventory add column if not exists extended_minutes int not null default 0;
+
+create index if not exists inventory_reminder_idx
+  on inventory(status, reminded_at, expires_at);
+
+alter table settings add column if not exists reminders_enabled boolean not null default true;
+alter table settings add column if not exists reminder_hours int not null default 24;
+alter table settings add column if not exists reminder_grace_minutes int not null default 30;
+
+
+-- ------------------------------------------------------------
+--  Массовые рассылки
+--
+--  Рассылка разбита на две таблицы, а не отправляется одним запросом,
+--  по двум причинам. Telegram не даёт слать больше ~30 сообщений в
+--  секунду, а функция на Vercel живёт 10 секунд — тысяча клиентов в
+--  один заход не поместится. И если отправка оборвётся на середине,
+--  по списку получателей видно, кому уже ушло, и повтор не задваивает.
+-- ------------------------------------------------------------
+
+create table if not exists broadcasts (
+  id bigserial primary key,
+  text text not null,
+  audience text not null default 'all',        -- all | active | holding | lapsed
+  actor_id bigint,
+  status text not null default 'pending',      -- pending | sending | done | cancelled
+  total int not null default 0,
+  sent int not null default 0,
+  failed int not null default 0,
+  created_at timestamptz not null default now(),
+  finished_at timestamptz
+);
+
+create table if not exists broadcast_recipients (
+  broadcast_id bigint not null references broadcasts(id) on delete cascade,
+  user_id bigint not null references users(id),
+  status text not null default 'pending',      -- pending | sent | failed
+  error text,
+  sent_at timestamptz,
+  primary key (broadcast_id, user_id)
+);
+
+create index if not exists broadcast_recipients_queue_idx
+  on broadcast_recipients(broadcast_id, status);
+
+
+-- ------------------------------------------------------------
+--  Кого пора предупредить о сгорании приза
+--
+--  Функция не просто выбирает призы, а сразу помечает их и продлевает
+--  срок. Пометка и выборка в одном операторе — иначе повторный запуск
+--  задачи (Vercel умеет ретраить) прислал бы клиенту второе письмо и
+--  продлил бы код ещё раз.
+--
+--  Продление на полчаса — жест доброй воли: клиент читает сообщение
+--  уже с запасом времени, а не с мыслью "всё равно не успею".
+-- ------------------------------------------------------------
+
+create or replace function due_reminders(p_limit int default 60)
+returns json
+language plpgsql
+as $$
+declare
+  v_enabled boolean;
+  v_hours   int;
+  v_grace   int;
+  v_items   json;
+begin
+  select reminders_enabled, reminder_hours, reminder_grace_minutes
+    into v_enabled, v_hours, v_grace
+    from settings where id = 1;
+
+  v_hours := coalesce(v_hours, 24);
+  v_grace := coalesce(v_grace, 30);
+
+  if not coalesce(v_enabled, true) then
+    return json_build_object('items', '[]'::json, 'skipped', 'disabled');
+  end if;
+
+  with due as (
+    select i.id
+      from inventory i
+      join users u on u.id = i.user_id
+     where i.status = 'unused'
+       and i.reminded_at is null
+       and i.expires_at > now()
+       and i.expires_at <= now() + make_interval(hours => v_hours)
+       and u.can_message
+       and not u.blocked
+     order by i.expires_at
+     limit greatest(1, coalesce(p_limit, 60))
+     for update of i skip locked
+  ),
+  bumped as (
+    update inventory i
+       set reminded_at      = now(),
+           expires_at       = i.expires_at + make_interval(mins => v_grace),
+           extended_minutes = i.extended_minutes + v_grace
+      from due
+     where i.id = due.id
+    returning i.user_id, i.title, i.code, i.expires_at
+  )
+  select coalesce(json_agg(json_build_object(
+           'userId',    b.user_id,
+           'title',     b.title,
+           'code',      b.code,
+           'expiresAt', b.expires_at
+         )), '[]'::json)
+    into v_items
+    from bumped b;
+
+  return json_build_object('items', v_items, 'graceMinutes', v_grace);
+end;
+$$;
+
+
+-- ------------------------------------------------------------
+--  Аудитории рассылки
+--
+--  Во всех выборках отсечены заблокированные и те, кому бот писать не
+--  может: слать им бессмысленно, а в статистике они выглядели бы как
+--  провалившаяся доставка.
+-- ------------------------------------------------------------
+
+create or replace function audience_sizes()
+returns json
+language sql
+as $$
+  select json_build_object(
+    'all',     count(*) filter (where true),
+    'active',  count(*) filter (where u.last_checkin_at >= now() - interval '30 days'),
+    'lapsed',  count(*) filter (where u.last_checkin_at is null
+                                   or u.last_checkin_at <  now() - interval '30 days'),
+    'holding', count(*) filter (where exists (
+                 select 1 from inventory i
+                  where i.user_id = u.id and i.status = 'unused' and i.expires_at > now())),
+    'unreachable', (select count(*) from users x where not x.can_message and not x.blocked)
+  )
+  from users u
+  where u.can_message and not u.blocked;
+$$;
+
+
+create or replace function create_broadcast(p_text text, p_actor bigint, p_audience text)
+returns json
+language plpgsql
+as $$
+declare
+  v_id    bigint;
+  v_total int;
+  v_aud   text := coalesce(p_audience, 'all');
+begin
+  if coalesce(btrim(p_text), '') = '' then
+    return json_build_object('error', 'empty_text');
+  end if;
+
+  if v_aud not in ('all', 'active', 'lapsed', 'holding') then
+    return json_build_object('error', 'bad_audience');
+  end if;
+
+  insert into broadcasts (text, audience, actor_id, status)
+  values (btrim(p_text), v_aud, p_actor, 'sending')
+  returning id into v_id;
+
+  insert into broadcast_recipients (broadcast_id, user_id)
+  select v_id, u.id
+    from users u
+   where u.can_message
+     and not u.blocked
+     and (
+       v_aud = 'all'
+       or (v_aud = 'active'  and u.last_checkin_at >= now() - interval '30 days')
+       or (v_aud = 'lapsed'  and (u.last_checkin_at is null
+                                  or u.last_checkin_at < now() - interval '30 days'))
+       or (v_aud = 'holding' and exists (
+             select 1 from inventory i
+              where i.user_id = u.id and i.status = 'unused' and i.expires_at > now()))
+     );
+
+  get diagnostics v_total = row_count;
+
+  update broadcasts
+     set total = v_total,
+         status = case when v_total = 0 then 'done' else 'sending' end,
+         finished_at = case when v_total = 0 then now() else null end
+   where id = v_id;
+
+  return json_build_object('id', v_id, 'total', v_total, 'audience', v_aud);
+end;
+$$;
+
+
+-- Момент, когда получателя взяли в работу. По нему возвращаются в
+-- очередь партии, зависшие из-за упавшей функции.
+alter table broadcast_recipients add column if not exists claimed_at timestamptz;
+
+
+create or replace function next_broadcast_batch(p_id bigint, p_limit int default 25)
+returns json
+language plpgsql
+as $$
+declare
+  v_text   text;
+  v_status text;
+  v_ids    json;
+  v_left   int;
+begin
+  select b.text, b.status into v_text, v_status from broadcasts b where b.id = p_id;
+
+  if v_text is null then
+    return json_build_object('error', 'not_found');
+  end if;
+  if v_status = 'cancelled' then
+    return json_build_object('error', 'cancelled');
+  end if;
+
+  update broadcast_recipients
+     set status = 'pending', claimed_at = null
+   where broadcast_id = p_id
+     and status = 'sending'
+     and claimed_at < now() - interval '2 minutes';
+
+  with batch as (
+    select r.user_id
+      from broadcast_recipients r
+     where r.broadcast_id = p_id and r.status = 'pending'
+     limit greatest(1, coalesce(p_limit, 25))
+     for update skip locked
+  ),
+  claimed as (
+    update broadcast_recipients r
+       set status = 'sending', claimed_at = now()
+      from batch
+     where r.broadcast_id = p_id and r.user_id = batch.user_id
+    returning r.user_id
+  )
+  select coalesce(json_agg(c.user_id), '[]'::json) into v_ids from claimed c;
+
+  select count(*) into v_left
+    from broadcast_recipients
+   where broadcast_id = p_id and status = 'pending';
+
+  return json_build_object('text', v_text, 'userIds', v_ids, 'pending', v_left);
+end;
+$$;
+
+
+create or replace function finish_broadcast_batch(p_id bigint, p_results jsonb)
+returns json
+language plpgsql
+as $$
+declare
+  v_left int;
+  v_out  json;
+begin
+  update broadcast_recipients r
+     set status     = case when coalesce((e->>'ok')::boolean, false) then 'sent' else 'failed' end,
+         error      = nullif(e->>'error', ''),
+         sent_at    = now(),
+         claimed_at = null
+    from jsonb_array_elements(coalesce(p_results, '[]'::jsonb)) e
+   where r.broadcast_id = p_id
+     and r.user_id = (e->>'userId')::bigint;
+
+  -- Кто закрыл переписку с ботом — больше не получит ничего. Помечаем,
+  -- чтобы каждая следующая рассылка не билась в ту же стену.
+  update users u
+     set can_message = false
+    from jsonb_array_elements(coalesce(p_results, '[]'::jsonb)) e
+   where u.id = (e->>'userId')::bigint
+     and coalesce((e->>'blocked')::boolean, false);
+
+  update broadcasts b
+     set sent   = (select count(*) from broadcast_recipients r
+                    where r.broadcast_id = b.id and r.status = 'sent'),
+         failed = (select count(*) from broadcast_recipients r
+                    where r.broadcast_id = b.id and r.status = 'failed')
+   where b.id = p_id;
+
+  select count(*) into v_left
+    from broadcast_recipients
+   where broadcast_id = p_id and status in ('pending', 'sending');
+
+  if v_left = 0 then
+    update broadcasts set status = 'done', finished_at = now()
+     where id = p_id and status <> 'cancelled';
+  end if;
+
+  select json_build_object(
+           'id', b.id, 'total', b.total, 'sent', b.sent,
+           'failed', b.failed, 'pending', v_left, 'status', b.status
+         )
+    into v_out
+    from broadcasts b where b.id = p_id;
+
+  return v_out;
+end;
+$$;
+
+
+create or replace function list_broadcasts(p_limit int default 20)
+returns json
+language sql
+as $$
+  select coalesce(json_agg(t), '[]'::json) from (
+    select b.id, b.text, b.audience, b.status, b.total, b.sent, b.failed,
+           b.created_at, b.finished_at
+      from broadcasts b
+     order by b.created_at desc
+     limit greatest(1, coalesce(p_limit, 20))
+  ) t;
+$$;
+
 notify pgrst, 'reload schema';

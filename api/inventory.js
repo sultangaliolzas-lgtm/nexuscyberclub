@@ -36,6 +36,11 @@ module.exports = async function handler(req, res) {
       // приложение рисует обратный отсчёт вместо кнопки.
       nextSpinAt: nextSpinAt(user, settings),
       maxUnusedPrizes: settings.max_unused_prizes || 0,
+      // Может ли бот написать клиенту. Если нет, приложение предложит
+      // включить напоминания: Telegram запрещает боту писать первым,
+      // пока человек сам не начал с ним переписку.
+      canMessage: Boolean(user && user.can_message),
+      botLink: botLink(),
       visitsTotal: user ? user.visits_total : 0,
       items: items.map((i) => shape(i, iconByKey)),
       redeemed: redeemed.map((i) => shape(i, iconByKey))
@@ -45,6 +50,13 @@ module.exports = async function handler(req, res) {
     res.status(500).json({ error: "internal_error" });
   }
 };
+
+// start=notify — чтобы в логах бота было видно, что человек пришёл
+// именно за уведомлениями, а не отсканировал QR на стойке.
+function botLink() {
+  const name = process.env.BOT_USERNAME;
+  return name ? "https://t.me/" + String(name).replace(/^@/, "") + "?start=notify" : null;
+}
 
 function nextSpinAt(user, settings) {
   if (!user || !user.last_checkin_at) return null;

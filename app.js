@@ -19,18 +19,24 @@
     clientSort: "recent",
     spinning: false,
     adminDays: 7,
-    prizes: null
+    prizes: null,
+    canMessage: true,   // пока не знаем — не пугаем клиента подсказкой
+    botLink: null
   };
 
   var el = {};
   ["clubName", "banner", "strip", "burst", "reelFrame", "timer", "timerValue", "prizeDot",
    "result", "resultIcon", "resultTitle", "resultSub", "resultCode",
    "spinBtn", "hint", "inventoryList", "inventoryEmpty", "historyBlock", "historyList",
+   "notifyNotice", "notifyLink",
    "tabs", "adminNav", "periodNav", "statTiles", "funnelTable", "funnelFoot",
    "todayTiles", "chart", "liability", "clientSort", "exportNav", "exportBtn", "configLog",
    "outstandingList", "outstandingFoot", "sourcesList", "activityList",
    "prizeEditor", "clientsList", "clientsFoot", "clientSearch", "grantAmount", "selfGrant",
    "settingsForm", "staffForm", "staffList",
+   "remindForm", "remindNow", "remindResult",
+   "castText", "castAudience", "castAudienceFoot", "castSend",
+   "castProgress", "castBar", "castProgressFoot", "castList",
    "deskCode", "deskSubmit", "deskScan", "deskResult", "deskLog", "deskHint",
    "toast"].forEach(function (id) { el[id] = document.getElementById(id); });
 
@@ -82,6 +88,8 @@
         state.cap = data.maxUnusedPrizes || 0;
         state.items = data.items || [];
         state.redeemed = data.redeemed || [];
+        state.canMessage = data.canMessage !== false;
+        state.botLink = data.botLink || null;
 
         if (state.role === "owner" || state.role === "staff") {
           document.querySelector('.tab[data-tab="desk"]').hidden = false;
@@ -191,6 +199,17 @@
       markActive(el.periodNav, btn);
       loadStats();
     });
+
+    el.castAudience.addEventListener("click", function (e) {
+      var btn = e.target.closest(".seg");
+      if (!btn) return;
+      castAudience = btn.dataset.aud;
+      markActive(el.castAudience, btn);
+      renderAudienceFoot();
+    });
+
+    el.castSend.addEventListener("click", startBroadcast);
+    el.remindNow.addEventListener("click", remindNow);
   }
 
   function myId() {
@@ -210,11 +229,12 @@
 
   function setAdminPane(pane) {
     markActive(el.adminNav, el.adminNav.querySelector('[data-pane="' + pane + '"]'));
-    ["stats", "prizes", "clients", "team"].forEach(function (name) {
+    ["stats", "prizes", "clients", "comms", "team"].forEach(function (name) {
       document.getElementById("pane-" + name).hidden = name !== pane;
     });
     if (pane === "prizes") loadPrizes();
     if (pane === "clients") loadClients();
+    if (pane === "comms") loadComms();
     if (pane === "team") loadTeam();
   }
 
@@ -545,6 +565,7 @@
 
   function renderInventory() {
     updatePrizeDot();
+    renderNotifyNotice();
     el.inventoryList.innerHTML = "";
     el.inventoryEmpty.hidden = state.items.length !== 0;
 
@@ -557,6 +578,16 @@
     state.redeemed.forEach(function (item) {
       el.historyList.appendChild(prizeCard(item, true));
     });
+  }
+
+  // Telegram запрещает боту писать первым, пока человек сам не начал с
+  // ним переписку. Мини-апп, открытый по ссылке с наклейки, такого
+  // разрешения не даёт — поэтому тем, у кого есть что терять, показываем
+  // прямой путь включить напоминания.
+  function renderNotifyNotice() {
+    var needed = !state.canMessage && state.botLink && state.items.length > 0;
+    el.notifyNotice.hidden = !needed;
+    if (needed) el.notifyLink.href = state.botLink;
   }
 
   function prizeCard(item, done) {
@@ -1585,6 +1616,252 @@
         ? name + " → " + c.to
         : name + ": " + c.from + " → " + c.to;
     }).join(" · ");
+  }
+
+  /* ---------------------------------------------------- связь с клиентами */
+
+  var castAudience = "all";
+  var castSizes = {};
+  var castResume = null;   // id прерванной рассылки: её продолжаем, а не начинаем заново
+
+  var AUDIENCE_NOTE = {
+    all:     "все, кому бот может писать",
+    active:  "были в клубе за последние 30 дней",
+    lapsed:  "не были больше 30 дней — повод вернуть",
+    holding: "есть невыкупленный приз на руках"
+  };
+
+  var AUDIENCE_LABEL = {
+    all: "Все", active: "Активные", lapsed: "Пропали", holding: "С призом"
+  };
+
+  function loadComms() {
+    renderRemindForm();
+    loadBroadcasts();
+  }
+
+  function renderRemindForm() {
+    if (el.remindForm.dataset.ready) return;
+    el.remindForm.dataset.ready = "1";
+    el.remindForm.innerHTML = '<p class="skeleton">Загружаем...</p>';
+
+    api("/api/admin?r=settings")
+      .then(function (data) {
+        var s = data.settings;
+        el.remindForm.innerHTML = "";
+
+        var toggle = document.createElement("label");
+        toggle.className = "switch";
+        var check = input("checkbox", s.reminders_enabled !== false);
+        toggle.appendChild(check);
+        toggle.appendChild(document.createTextNode("Напоминать о сгорании призов"));
+
+        var fHours = field("Предупреждать за, часов", input("number", s.reminder_hours || 24), true);
+        var fGrace = field("Добавлять к сроку, минут",
+                           input("number", s.reminder_grace_minutes == null ? 30 : s.reminder_grace_minutes), true);
+
+        var save = document.createElement("button");
+        save.className = "btn";
+        save.type = "button";
+        save.textContent = "Сохранить";
+
+        el.remindForm.appendChild(toggle);
+        el.remindForm.appendChild(fHours.wrap);
+        el.remindForm.appendChild(fGrace.wrap);
+        el.remindForm.appendChild(save);
+
+        save.addEventListener("click", function () {
+          save.disabled = true;
+          api("/api/admin?r=settings", {
+            method: "PATCH",
+            body: {
+              reminders_enabled: check.checked,
+              reminder_hours: Number(fHours.input.value),
+              reminder_grace_minutes: Number(fGrace.input.value)
+            }
+          })
+            .then(function () { toast("Сохранено"); haptic("success"); })
+            .catch(function (err) { toast("Ошибка: " + err.message, true); })
+            .then(function () { save.disabled = false; });
+        });
+      })
+      .catch(function (err) {
+        el.remindForm.dataset.ready = "";
+        el.remindForm.innerHTML = "";
+        el.remindForm.appendChild(fill("skeleton", "Не удалось загрузить: " + err.message));
+      });
+  }
+
+  function loadBroadcasts() {
+    api("/api/admin?r=broadcast")
+      .then(function (data) {
+        castSizes = data.audiences || {};
+        renderAudienceFoot();
+        renderCastHistory(data.broadcasts || []);
+      })
+      .catch(function (err) {
+        el.castList.innerHTML = "";
+        el.castList.appendChild(fill("skeleton", "Не удалось загрузить: " + err.message));
+      });
+  }
+
+  // Владелец должен видеть размер аудитории до отправки, а не после.
+  // Отдельной строкой — те, до кого дотянуться нельзя: это не ошибка,
+  // а следствие того, что мини-апп можно открыть, ни разу не написав боту.
+  function renderAudienceFoot() {
+    var count = castSizes[castAudience];
+    var text = "Получат: " + (count == null ? "?" : count) + " — " + AUDIENCE_NOTE[castAudience] + ".";
+
+    if (castSizes.unreachable) {
+      text += " Ещё " + castSizes.unreachable + " не получат: они открывали приложение, но не запускали бота, " +
+              "а Telegram запрещает боту писать первым без разрешения.";
+    }
+
+    el.castAudienceFoot.textContent = text;
+  }
+
+  function remindNow() {
+    el.remindNow.disabled = true;
+    el.remindResult.textContent = "Отправляем...";
+
+    api("/api/admin?r=remind", { method: "POST" })
+      .then(function (res) {
+        el.remindResult.textContent = res.found
+          ? "Отправлено " + res.sent + " из " + res.found +
+            (res.failed ? ", не дошло: " + res.failed : "") + "."
+          : "Предупреждать сейчас некого: призов, сгорающих в ближайшие часы, нет.";
+        haptic("success");
+      })
+      .catch(function (err) { el.remindResult.textContent = "Ошибка: " + err.message; })
+      .then(function () { el.remindNow.disabled = false; });
+  }
+
+  function startBroadcast() {
+    // Прерванную рассылку продолжаем по её id. Создать новую означало бы
+    // отправить второе сообщение тем, кто уже получил первое.
+    if (castResume) {
+      runBroadcast(castResume.id, castResume.total);
+      return;
+    }
+
+    var text = el.castText.value.trim();
+    if (!text) {
+      toast("Сначала напишите текст", true);
+      return;
+    }
+
+    var count = castSizes[castAudience] || 0;
+    if (!count) {
+      toast("В этой аудитории сейчас никого нет", true);
+      return;
+    }
+
+    askConfirm("Отправить сообщение " + count + " клиентам? Отменить отправку будет нельзя.", function () {
+      el.castSend.disabled = true;
+      el.castProgressFoot.textContent = "Готовим список получателей...";
+      el.castProgress.hidden = false;
+
+      api("/api/admin?r=broadcast", { method: "POST", body: { text: text, audience: castAudience } })
+        .then(function (created) {
+          runBroadcast(created.id, created.total);
+        })
+        .catch(function (err) {
+          el.castProgressFoot.textContent = "Не удалось создать рассылку: " + err.message;
+          el.castSend.disabled = false;
+        });
+    });
+  }
+
+  // Отправка идёт партиями по 25: столько успевает уйти за один вызов,
+  // не упираясь ни в лимит Telegram, ни в лимит времени функции.
+  // Каждый ответ приносит прогресс, поэтому владелец видит движение,
+  // а не замерший экран.
+  function runBroadcast(id, total) {
+    castResume = null;
+    el.castSend.disabled = true;
+    el.castProgress.hidden = false;
+
+    step();
+
+    function step() {
+      api("/api/admin?r=broadcast&id=" + id, { method: "PATCH" })
+        .then(function (p) {
+          updateProgress(p, total);
+
+          if (p.pending > 0) {
+            step();
+            return;
+          }
+
+          el.castSend.disabled = false;
+          el.castSend.textContent = "Отправить рассылку";
+          el.castText.value = "";
+          toast("Рассылка отправлена");
+          haptic("success");
+          loadBroadcasts();
+        })
+        .catch(function (err) {
+          // Список получателей помнит, кому уже ушло, поэтому продолжить
+          // безопасно: повторных сообщений не будет.
+          castResume = { id: id, total: total };
+          el.castSend.disabled = false;
+          el.castSend.textContent = "Продолжить рассылку";
+          el.castProgressFoot.textContent = "Прервалось: " + err.message +
+            ". Нажмите «Продолжить» — те, кому уже дошло, второй раз не получат.";
+        });
+    }
+  }
+
+  function updateProgress(p, total) {
+    var done = (p.sent || 0) + (p.failed || 0);
+    var pct = total ? Math.round((done / total) * 100) : 100;
+
+    el.castBar.style.width = pct + "%";
+    el.castProgressFoot.textContent = "Отправлено " + done + " из " + total +
+      (p.failed ? " · не дошло: " + p.failed : "");
+  }
+
+  function renderCastHistory(list) {
+    el.castList.innerHTML = "";
+
+    if (!list.length) {
+      el.castList.appendChild(fill("skeleton", "Рассылок ещё не было."));
+      return;
+    }
+
+    list.forEach(function (b) {
+      var li = document.createElement("li");
+      li.className = "card";
+
+      var side = b.status === "done"
+        ? span("", b.sent + " из " + b.total)
+        : span("soon", b.sent + " из " + b.total);
+
+      li.appendChild(row("📣", firstLine(b.text), AUDIENCE_LABEL[b.audience] || b.audience, side));
+
+      var hint = fill("card-hint", shortDate(b.created_at) +
+        (b.failed ? " · не дошло: " + b.failed : ""));
+      hint.style.textAlign = "left";
+      li.appendChild(hint);
+
+      el.castList.appendChild(li);
+    });
+  }
+
+  // В списке нужна узнаваемая строка, а не весь текст объявления.
+  function firstLine(text) {
+    var line = String(text || "").split("\n")[0];
+    return line.length > 60 ? line.slice(0, 57) + "..." : line;
+  }
+
+  // Telegram рисует свой диалог поверх приложения; window.confirm внутри
+  // мини-аппа работает не везде, поэтому он только запасной вариант.
+  function askConfirm(text, onYes) {
+    if (tg && tg.showConfirm) {
+      tg.showConfirm(text, function (ok) { if (ok) onYes(); });
+      return;
+    }
+    if (window.confirm(text)) onYes();
   }
 
   function renderSettings() {

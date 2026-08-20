@@ -1,5 +1,6 @@
 const db = require("../lib/db");
 const { requireOwner, methodGuard } = require("../lib/guard");
+const { runReminders, sendBroadcastBatch } = require("../lib/notify");
 
 // Весь кабинет владельца — одна serverless-функция с раздельными
 // обработчиками. Держать по файлу на раздел было бы аккуратнее, но
@@ -16,6 +17,8 @@ const ROUTES = {
   grant:    { methods: ["POST"],                    handler: grant },
   block:    { methods: ["POST"],                    handler: block },
   log:      { methods: ["GET"],                     handler: log },
+  remind:   { methods: ["POST"],                    handler: remind },
+  broadcast:{ methods: ["GET", "POST", "PATCH"],    handler: broadcast },
   export:   { methods: ["POST"],                    handler: exportCsv }
 };
 
@@ -222,6 +225,15 @@ async function settings(req, res, auth) {
   if (body.checkin_enabled !== undefined) {
     patch.checkin_enabled = Boolean(body.checkin_enabled);
   }
+  if (body.reminders_enabled !== undefined) {
+    patch.reminders_enabled = Boolean(body.reminders_enabled);
+  }
+  if (body.reminder_hours !== undefined) {
+    patch.reminder_hours = clampInt(body.reminder_hours, 1, 168);
+  }
+  if (body.reminder_grace_minutes !== undefined) {
+    patch.reminder_grace_minutes = clampInt(body.reminder_grace_minutes, 0, 1440);
+  }
 
   if (Object.keys(patch).length === 0) {
     res.status(400).json({ error: "nothing_to_update" });
@@ -298,6 +310,72 @@ async function block(req, res, auth) {
 
 async function log(req, res) {
   res.status(200).json({ log: (await db.rpc("admin_config_log", { p_limit: 60 })) || [] });
+}
+
+/* ---------------------------------------------------------- напоминания */
+
+// Кнопка "отправить сейчас". Дёргает ровно ту же функцию, что и
+// ежедневная задача: владельцу не нужно ждать до утра, чтобы убедиться,
+// что напоминания вообще уходят.
+async function remind(req, res) {
+  const result = await runReminders();
+  res.status(200).json(Object.assign({ ok: true }, result));
+}
+
+/* ---------------------------------------------------------- рассылки */
+
+// Рассылка идёт партиями, а не одним запросом: Telegram не даёт слать
+// больше тридцати сообщений в секунду, а функция на Vercel живёт
+// ограниченное время. Панель создаёт рассылку (POST), а затем повторяет
+// PATCH, пока не кончатся получатели, и рисует по ответам прогресс.
+async function broadcast(req, res, auth) {
+  if (req.method === "GET") {
+    const [list, sizes] = await Promise.all([
+      db.rpc("list_broadcasts", { p_limit: 20 }),
+      db.rpc("audience_sizes", {})
+    ]);
+    res.status(200).json({ broadcasts: list || [], audiences: sizes || {} });
+    return;
+  }
+
+  if (req.method === "POST") {
+    // 3500 символов вместо телеграмных 4096 — с запасом на случай, если
+    // текст придётся дополнить служебной строкой.
+    const text = String((req.body && req.body.text) || "").trim().slice(0, 3500);
+
+    if (!text) {
+      res.status(400).json({ error: "empty_text" });
+      return;
+    }
+
+    const created = await db.rpc("create_broadcast", {
+      p_text: text,
+      p_actor: auth.user.id,
+      p_audience: String((req.body && req.body.audience) || "all")
+    });
+
+    if (created && created.error) {
+      res.status(400).json(created);
+      return;
+    }
+
+    res.status(200).json(created);
+    return;
+  }
+
+  const id = Number((req.query && req.query.id) || (req.body && req.body.id));
+  if (!id || !isFinite(id)) {
+    res.status(400).json({ error: "bad_id" });
+    return;
+  }
+
+  const progress = await sendBroadcastBatch(id, 25);
+  if (progress && progress.error) {
+    res.status(404).json(progress);
+    return;
+  }
+
+  res.status(200).json(progress);
 }
 
 /* ---------------------------------------------------------- выгрузка */
