@@ -405,12 +405,20 @@ async function broadcast(req, res, auth) {
 // на стороне Telegram. Если её когда-то завели через BotFather со старым
 // адресом, она будет открывать старую версию приложения даже после
 // переезда — отсюда её можно переписать на текущий адрес или убрать.
-async function menu(req, res) {
+async function menu(req, res, auth) {
   if (req.method === "GET") {
-    const current = await getMenuButton();
+    // Спрашиваем и общее правило, и то, что видит лично владелец:
+    // персональная настройка чата перекрывает общую, и расхождение
+    // между ними — самая частая причина "нажал, а не поменялось".
+    const [common, mine] = await Promise.all([
+      getMenuButton(),
+      getMenuButton(auth.user.id)
+    ]);
+
     res.status(200).json({
-      button: current.ok ? current.button : null,
-      error: current.ok ? null : current.error,
+      button: common.ok ? common.button : null,
+      chatButton: mine.ok ? mine.button : null,
+      error: common.ok ? null : common.error,
       webappUrl: process.env.WEBAPP_URL || null
     });
     return;
@@ -424,7 +432,7 @@ async function menu(req, res) {
     return;
   }
 
-  const result = await setMenuButton(enable ? url : null, "Открыть рулетку");
+  const result = await setMenuButton(enable ? url : null, "Открыть рулетку", auth.user.id);
 
   if (!result.ok) {
     res.status(502).json({ error: "telegram_error", reason: result.error });
@@ -433,13 +441,17 @@ async function menu(req, res) {
 
   // Возвращаем не то, что просили, а то, что Telegram теперь отдаёт:
   // это единственный ответ на вопрос "а точно применилось?".
-  const current = await getMenuButton();
+  const [common, mine] = await Promise.all([
+    getMenuButton(),
+    getMenuButton(auth.user.id)
+  ]);
 
   res.status(200).json({
     ok: true,
     enabled: enable,
     url: enable ? url : null,
-    button: current.ok ? current.button : null
+    button: common.ok ? common.button : null,
+    chatButton: mine.ok ? mine.button : null
   });
 }
 

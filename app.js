@@ -2033,7 +2033,7 @@
         // Без WEBAPP_URL привязка обречена, и лучше сказать это сразу,
         // чем дать нажать кнопку и получить невнятную ошибку.
         el.menuResult.textContent = res.webappUrl
-          ? describeMenu(res.button, res.error)
+          ? describeMenu(res.button, res.chatButton, res.error)
           : "В переменных окружения Vercel не задан WEBAPP_URL — привязать кнопку не к чему.";
       })
       .catch(function (err) { el.menuResult.textContent = "Не удалось проверить: " + err.message; });
@@ -2043,20 +2043,41 @@
   // Иначе настройка превращается в гадание: панель рапортует об успехе,
   // а в чате всё по-старому, и непонятно, кто виноват — сервер или кэш
   // приложения Telegram.
-  function describeMenu(button, error) {
+  function describeMenu(common, chat, error) {
     if (error) return "Telegram не ответил: " + error;
-    if (!button) return "Telegram не сообщил, какая кнопка стоит.";
+
+    var text = "Общая настройка: " + oneMenu(common) + " В вашем чате: " + oneMenu(chat);
+
+    // Расхождение означает, что Telegram отдаёт нам одно, а рисует
+    // другое, — то есть кнопку держит кэш приложения, а не сервер.
+    if (sameMenu(common, chat)) {
+      text += " Совпадают — значит то, что вы видите в чате другим, показывает кэш Telegram.";
+    }
+
+    return text;
+  }
+
+  function oneMenu(button) {
+    if (!button) return "не сообщена.";
 
     if (button.type === "web_app") {
       var url = (button.web_app && button.web_app.url) || "";
       var mine = state.origin && url.indexOf(state.origin) === 0;
-
-      return "Сейчас в чате: «" + (button.text || "") + "» → " + url +
-        (mine ? " — это текущее приложение." : " — ЧУЖОЙ АДРЕС, кнопка открывает старую версию.");
+      return "«" + (button.text || "") + "» → " + url +
+        (mine ? " (текущее приложение)." : " — ЧУЖОЙ АДРЕС, открывает старую версию.");
     }
 
-    if (button.type === "commands") return "Сейчас в чате: обычное меню команд, приложение с кнопки не открывается.";
-    return "Сейчас в чате: кнопка по умолчанию (" + button.type + ").";
+    if (button.type === "commands") return "меню команд, приложение не открывается.";
+    if (button.type === "default") return "как у всех.";
+    return button.type + ".";
+  }
+
+  function sameMenu(a, b) {
+    if (!a || !b) return false;
+    if (b.type === "default") return true;
+    if (a.type !== b.type) return false;
+    if (a.type !== "web_app") return true;
+    return ((a.web_app && a.web_app.url) || "") === ((b.web_app && b.web_app.url) || "");
   }
 
   function setBotMenu(enabled) {
@@ -2066,8 +2087,8 @@
 
     api("/api/admin?r=menu", { method: "POST", body: { enabled: enabled } })
       .then(function (res) {
-        el.menuResult.textContent = describeMenu(res.button, null) +
-          " Telegram кэширует кнопку: чтобы увидеть изменение, закройте чат с ботом и откройте заново.";
+        el.menuResult.textContent = describeMenu(res.button, res.chatButton, null) +
+          " Telegram кэширует кнопку намертво: перезапустите приложение Telegram целиком, закрыть чат недостаточно.";
         haptic("success");
       })
       .catch(function (err) { el.menuResult.textContent = "Ошибка: " + err.message; })
