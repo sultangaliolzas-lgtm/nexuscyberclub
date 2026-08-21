@@ -823,7 +823,8 @@ body {
 
 /* ------------------------------------------------------- рассылки */
 
-#castText {
+#castText,
+#welcomeText {
   width: 100%;
   min-width: 0;
   margin-bottom: 11px;
@@ -838,7 +839,8 @@ body {
   resize: vertical;
 }
 
-#castText:focus { outline: none; border-color: var(--accent); }
+#castText:focus,
+#welcomeText:focus { outline: none; border-color: var(--accent); }
 #castText::placeholder { color: var(--dim); }
 
 /* Прогресс отправки. Рассылка идёт партиями и на большой базе занимает
@@ -1115,3 +1117,6 @@ body {
 /* Прошедшие и отменённые брони приглушаются поштучно, а не всем списком:
    в одном перечне соседствуют активные и завершённые. */
 .card.muted { opacity: 0.55; }
+
+#welcomeLimit:empty,
+#welcomeResult:empty { display: none; }

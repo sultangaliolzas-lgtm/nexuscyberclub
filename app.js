@@ -34,6 +34,8 @@
    "hallMap", "bookSummary", "myBookings",
    "unreachFoot", "unreachList",
    "menuBind", "menuClear", "menuResult", "kbClear", "kbResult",
+   "welcomeText", "welcomePhoto", "welcomePhotoBtn", "welcomePreview",
+   "welcomeImg", "welcomeRemove", "welcomeLimit", "welcomeSave", "welcomeResult",
    "tabs", "adminNav", "periodNav", "statTiles", "funnelTable", "funnelFoot",
    "todayTiles", "chart", "liability", "clientSort", "exportNav", "exportBtn", "configLog",
    "outstandingList", "outstandingFoot", "sourcesList", "activityList",
@@ -223,6 +225,10 @@
     el.menuBind.addEventListener("click", function () { setBotMenu(true); });
     el.menuClear.addEventListener("click", function () { setBotMenu(false); });
     el.kbClear.addEventListener("click", clearBotKeyboard);
+    el.welcomeText.addEventListener("input", updateWelcomeLimit);
+    el.welcomePhoto.addEventListener("change", attachWelcomePhoto);
+    el.welcomeRemove.addEventListener("click", clearWelcomePhoto);
+    el.welcomeSave.addEventListener("click", saveWelcome);
     el.castPhoto.addEventListener("change", attachPhoto);
     el.castPhotoRemove.addEventListener("click", clearPhoto);
   }
@@ -268,20 +274,52 @@
 
   // Лента набирается случайными призами, а нужный подставляется в позицию
   // WIN_AT. Порядок не повторяется узором — иначе видно, что это цикл.
+  //
+  // Важно понимать, чем лента не является: она не разыгрывает приз.
+  // Победителя выбирает сервер и присылает готовым, а лента просто
+  // доезжает до его карточки. Поэтому наполнение соседних ячеек можно
+  // менять как угодно — на шанс выпадения это не влияет никак.
   function buildStrip(winnerKey) {
     if (!state.sectors.length) return;
 
     var frag = document.createDocumentFragment();
+    var prev = null;
 
     for (var i = 0; i < STRIP_LEN; i++) {
       var sector = null;
-      if (i === WIN_AT && winnerKey) sector = findSector(winnerKey);
-      if (!sector) sector = state.sectors[Math.floor(Math.random() * state.sectors.length)];
+
+      if (i === WIN_AT && winnerKey) {
+        sector = findSector(winnerKey);
+      }
+
+      if (!sector) {
+        // Соседа выигрышной карточки тоже разводим с ней: иначе на
+        // остановке рядом с призом стоит его двойник и выглядит это как
+        // сбой, хотя выигрыш один.
+        sector = pickFiller(prev, i === WIN_AT - 1 ? winnerKey : null);
+      }
+
       frag.appendChild(reelCard(sector));
+      prev = sector;
     }
 
     el.strip.innerHTML = "";
     el.strip.appendChild(frag);
+  }
+
+  // Две одинаковые карточки подряд читаются как ошибка отрисовки,
+  // поэтому берём случайный приз из тех, что отличаются от соседа.
+  // Если исключить нечего (в клубе остался один приз) — возвращаем что
+  // есть, лишь бы лента не опустела.
+  function pickFiller(prev, avoidKey) {
+    var pool = state.sectors.filter(function (s) {
+      if (prev && s.key === prev.key) return false;
+      if (avoidKey && s.key === avoidKey) return false;
+      return true;
+    });
+
+    if (!pool.length) pool = state.sectors;
+    return pool[Math.floor(Math.random() * pool.length)];
   }
 
   function reelCard(sector) {
@@ -2144,6 +2182,7 @@
     loadStaff();
     loadConfigLog();
     loadBotMenu();
+    loadWelcome();
   }
 
   // Файл уходит сообщением в чат бота: мини-апп внутри Telegram не может
@@ -2640,6 +2679,111 @@
     if (a.type !== b.type) return false;
     if (a.type !== "web_app") return true;
     return ((a.web_app && a.web_app.url) || "") === ((b.web_app && b.web_app.url) || "");
+  }
+
+  /* ---------------------------------------------------- приветствие бота */
+
+  var welcomePhotoId = null;
+
+  function loadWelcome() {
+    if (el.welcomeText.dataset.ready) return;
+
+    api("/api/admin?r=settings")
+      .then(function (data) {
+        var s = data.settings || {};
+        el.welcomeText.dataset.ready = "1";
+        el.welcomeText.value = s.welcome_text || "";
+        el.welcomeText.placeholder = "Пусто — бот пришлёт текст по умолчанию";
+        welcomePhotoId = s.welcome_photo_file_id || null;
+        renderWelcomePhoto(null);
+        updateWelcomeLimit();
+      })
+      .catch(function (err) {
+        el.welcomeResult.textContent = "Не удалось загрузить: " + err.message;
+      });
+  }
+
+  // Картинку показать превью мы не можем: в базе лежит file_id Telegram,
+  // а не адрес файла — развернуть его в картинку умеет только бот со
+  // своим токеном. Поэтому после загрузки показываем локальную копию, а
+  // при следующем открытии просто сообщаем, что картинка на месте.
+  function renderWelcomePhoto(dataUrl) {
+    if (!welcomePhotoId) {
+      el.welcomePreview.hidden = true;
+      el.welcomeImg.removeAttribute("src");
+      el.welcomePhotoBtn.textContent = "Прикрепить картинку";
+      return;
+    }
+
+    el.welcomePreview.hidden = false;
+    el.welcomePhotoBtn.textContent = "Заменить картинку";
+
+    if (dataUrl) {
+      el.welcomeImg.src = dataUrl;
+      el.welcomeImg.hidden = false;
+    } else {
+      el.welcomeImg.hidden = true;
+    }
+  }
+
+  function attachWelcomePhoto() {
+    var file = el.welcomePhoto.files && el.welcomePhoto.files[0];
+    if (!file) return;
+
+    el.welcomePhotoBtn.textContent = "Загружаем...";
+    var preview = null;
+
+    shrinkImage(file, 1600, 0.85)
+      .then(function (dataUrl) {
+        preview = dataUrl;
+        return api("/api/admin?r=photo", { method: "POST", body: { data: dataUrl, kind: "welcome" } });
+      })
+      .then(function (res) {
+        welcomePhotoId = res.fileId;
+        renderWelcomePhoto(preview);
+        updateWelcomeLimit();
+        toast("Картинка загружена — не забудьте сохранить");
+        haptic("success");
+      })
+      .catch(function (err) {
+        renderWelcomePhoto(null);
+        toast("Не удалось загрузить: " + err.message, true);
+      })
+      .then(function () { el.welcomePhoto.value = ""; });
+  }
+
+  function clearWelcomePhoto() {
+    welcomePhotoId = null;
+    el.welcomePhoto.value = "";
+    renderWelcomePhoto(null);
+    updateWelcomeLimit();
+  }
+
+  function updateWelcomeLimit() {
+    var left = CAPTION_LIMIT - el.welcomeText.value.length;
+
+    el.welcomeLimit.textContent = welcomePhotoId
+      ? "С картинкой текст уходит подписью: осталось " + left + " симв. из " + CAPTION_LIMIT + "."
+      : (left < 400 ? "Осталось символов: " + left + "." : "");
+  }
+
+  function saveWelcome() {
+    el.welcomeSave.disabled = true;
+    el.welcomeResult.textContent = "Сохраняем...";
+
+    api("/api/admin?r=settings", {
+      method: "PATCH",
+      body: {
+        welcome_text: el.welcomeText.value,
+        welcome_photo_file_id: welcomePhotoId
+      }
+    })
+      .then(function () {
+        el.welcomeResult.textContent = "Сохранено. Проверить можно командой /start в чате с ботом.";
+        haptic("success");
+      })
+      .catch(function (err) { el.welcomeResult.textContent = "Ошибка: " + err.message; })
+      .then(function () { el.welcomeSave.disabled = false; });
   }
 
   function clearBotKeyboard() {

@@ -135,6 +135,12 @@ alter table settings add column if not exists currency text not null default '�
 -- местному времени, а не по UTC.
 alter table settings add column if not exists timezone text not null default 'Asia/Almaty';
 
+-- Приветствие бота: текст и картинка к нему. Лежат в настройках, а не в
+-- коде, чтобы владелец правил их из кабинета без деплоя. В колонке с
+-- картинкой — file_id Telegram, сам файл хранится у них.
+alter table settings add column if not exists welcome_text text;
+alter table settings add column if not exists welcome_photo_file_id text;
+
 
 -- ------------------------------------------------------------
 --  Персонал. role: owner видит вкладку "Админ", staff — только бот.

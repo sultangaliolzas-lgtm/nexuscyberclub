@@ -1,6 +1,6 @@
 const db = require("../lib/db");
 const { roleOf } = require("../lib/guard");
-const { sendMessage } = require("../lib/telegram");
+const { sendMessage, sendPhoto } = require("../lib/telegram");
 
 const BOT_TOKEN = process.env.BOT_TOKEN;
 const WEBAPP_URL = process.env.WEBAPP_URL;
@@ -200,27 +200,37 @@ async function askPhone(chatId) {
   );
 }
 
+// Приветствие живёт в настройках, а не здесь: владелец правит текст и
+// картинку из кабинета, без деплоя. Хардкод остаётся запасным вариантом
+// на случай пустой настройки — бот не должен молчать на /start.
+const DEFAULT_WELCOME =
+  "Привет{name}!\n\n" +
+  "Это рулетка компьютерного клуба Nexus.\n\n" +
+  "Отсканируй QR-код на ресепшене — прокрут откроется сам, сразу в приложении.\n" +
+  "Выигрывай доп. время, скидки, снеки, напитки и VIP-места.\n\n" +
+  "Призы забираются на стойке клуба: покажи код сотруднику.";
+
 async function sendStart(chatId, firstName, role) {
-  let text =
-    "Привет" + (firstName ? ", " + firstName : "") + "!\n\n" +
-    "Это рулетка компьютерного клуба Nexus.\n\n" +
-    "Отсканируй QR-код на ресепшене — прокрут откроется сам, сразу в приложении.\n" +
-    "Выигрывай доп. время, скидки, снеки, напитки и VIP-места.\n\n" +
-    "Призы забираются на стойке клуба: покажи код сотруднику.\n\n" +
-    "Открыть приложение можно кнопкой слева от поля ввода.";
+  const settings = await db.getSettings();
+
+  let text = (settings.welcome_text || DEFAULT_WELCOME)
+    .replace("{name}", firstName ? ", " + firstName : "");
 
   if (role !== "client") {
     text += "\n\n———\nВы вошли как " + (role === "owner" ? "владелец" : "сотрудник") + ". Команды: /help";
   }
 
-  // remove_keyboard, а не кнопка под сообщением. Самая первая версия бота
-  // слала обычную клавиатуру с кнопкой запуска, и она живёт в чате
-  // вечно: смена кода её не убирает, а адрес в ней заморожен на момент
-  // отправки — то есть ведёт на давно мёртвый деплой. Единственный
-  // способ её убрать — явно попросить об этом, что и делаем при каждом
-  // /start. Вход в приложение при этом никуда не девается: его держит
-  // кнопка меню слева от поля ввода.
-  await sendMessage(chatId, text, { remove_keyboard: true });
+  const markup = { inline_keyboard: [[{ text: "🎰 Открыть рулетку", web_app: { url: WEBAPP_URL } }]] };
+
+  // С картинкой текст уходит подписью, а подпись у Telegram вчетверо
+  // короче сообщения — обрезку делает сам sendPhoto, но лучше не
+  // доводить: в кабинете показан счётчик.
+  if (settings.welcome_photo_file_id) {
+    await sendPhoto(chatId, settings.welcome_photo_file_id, text, markup);
+    return;
+  }
+
+  await sendMessage(chatId, text, markup);
 }
 
 async function sendId(chatId, from) {

@@ -245,6 +245,19 @@ async function settings(req, res, auth) {
   if (body.reminder_grace_minutes !== undefined) {
     patch.reminder_grace_minutes = clampInt(body.reminder_grace_minutes, 0, 1440);
   }
+  if (body.welcome_text !== undefined) {
+    // Приветствие с картинкой уходит подписью, а подпись у Telegram
+    // ограничена 1024 символами. Пустая строка означает «вернуть текст
+    // по умолчанию», поэтому превращается в null, а не сохраняется.
+    const welcome = String(body.welcome_text).trim().slice(0, CAPTION_LIMIT);
+    patch.welcome_text = welcome || null;
+  }
+  if (body.welcome_photo_file_id !== undefined) {
+    const photo = body.welcome_photo_file_id
+      ? String(body.welcome_photo_file_id).slice(0, 200)
+      : null;
+    patch.welcome_photo_file_id = photo;
+  }
 
   if (Object.keys(patch).length === 0) {
     res.status(400).json({ error: "nothing_to_update" });
@@ -498,8 +511,14 @@ async function photo(req, res, auth) {
     return;
   }
 
-  const result = await uploadPhoto(auth.user.id, buffer, "broadcast.jpg",
-                                   "Так объявление увидят клиенты");
+  // Подпись превью зависит от того, куда картинка пойдёт: владелец
+  // загружает и афиши рассылок, и баннер приветствия, и должен понимать,
+  // что именно он сейчас увидел.
+  const welcome = (req.body && req.body.kind) === "welcome";
+
+  const result = await uploadPhoto(auth.user.id, buffer,
+    welcome ? "welcome.jpg" : "broadcast.jpg",
+    welcome ? "Так приветствие увидят новые клиенты" : "Так объявление увидят клиенты");
 
   if (!result.ok) {
     console.error("uploadPhoto failed:", result.error);

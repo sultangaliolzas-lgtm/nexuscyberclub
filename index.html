@@ -286,6 +286,24 @@
         <p class="foot">Страница для печати наклеек с QR-кодом. Открывается в браузере.</p>
         <a class="link-btn" id="qrLink" href="/qr" target="_blank" rel="noopener">Открыть страницу печати</a>
 
+        <h2 class="section-title">Приветствие бота</h2>
+        <p class="foot">Что видит человек, впервые открыв чат с ботом или нажав /start. Подстановка <b>{name}</b> заменится на имя клиента. С картинкой сообщение читается совсем иначе, но текст тогда ограничен 1024 символами — так устроен Telegram.</p>
+        <textarea id="welcomeText" rows="7" maxlength="1024"></textarea>
+
+        <div class="attach">
+          <label class="link-btn" for="welcomePhoto" id="welcomePhotoBtn">Прикрепить картинку</label>
+          <input id="welcomePhoto" type="file" accept="image/*" hidden>
+        </div>
+
+        <div class="attach-preview" id="welcomePreview" hidden>
+          <img id="welcomeImg" alt="Баннер приветствия">
+          <button class="btn ghost" id="welcomeRemove" type="button">Убрать картинку</button>
+        </div>
+
+        <p class="foot" id="welcomeLimit"></p>
+        <button class="btn" id="welcomeSave" type="button">Сохранить приветствие</button>
+        <p class="foot" id="welcomeResult"></p>
+
         <h2 class="section-title">Кнопка меню в чате бота</h2>
         <p class="foot">Панель под полем ввода в переписке с ботом. Она настраивается один раз и хранится у Telegram, поэтому вбитый туда когда-то адрес продолжает открывать старую версию приложения даже после переезда.</p>
         <button class="btn" id="menuBind" type="button">Привязать к этому приложению</button>
