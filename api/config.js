@@ -49,6 +49,7 @@ const CHECKS = [
   { module: "notifications", table: "users",       select: "can_message" },
   { module: "notifications", table: "inventory",   select: "reminded_at" },
   { module: "broadcasts",    table: "broadcasts",  select: "photo_file_id" },
+  { module: "welcome",       table: "settings",    select: "welcome_photo_file_id" },
   { module: "broadcasts",    rpc: "audience_sizes" },
   { module: "booking",       table: "halls",       select: "name" },
   { module: "booking",       table: "seats",       select: "label" },
