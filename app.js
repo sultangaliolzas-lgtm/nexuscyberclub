@@ -2784,34 +2784,75 @@
     if (el.staffForm.dataset.ready) return;
     el.staffForm.dataset.ready = "1";
 
-    var fId = field("Telegram ID сотрудника", input("number", ""), true);
+    var fId = field("Telegram ID", input("number", ""), true);
     var fTitle = field("Имя (для себя)", input("text", ""), true);
+
+    var roleSelect = document.createElement("select");
+    [["staff", "Сотрудник — только касса"],
+     ["owner", "Владелец — полный доступ"]].forEach(function (pair) {
+      var option = document.createElement("option");
+      option.value = pair[0];
+      option.textContent = pair[1];
+      roleSelect.appendChild(option);
+    });
+
+    var fRole = field("Уровень доступа", roleSelect, true);
 
     var add = document.createElement("button");
     add.className = "btn";
     add.type = "button";
-    add.textContent = "Добавить сотрудника";
+    add.textContent = "Добавить";
+
+    var note = fill("foot", "");
 
     el.staffForm.appendChild(fId.wrap);
     el.staffForm.appendChild(fTitle.wrap);
+    el.staffForm.appendChild(fRole.wrap);
     el.staffForm.appendChild(add);
-    el.staffForm.appendChild(fill("foot", "Сотрудник узнаёт свой ID командой /id в боте. После добавления он сможет гасить коды призов и начислять прокруты вручную."));
+    el.staffForm.appendChild(note);
+
+    // Разница между ролями — это разница между «гасит коды на стойке» и
+    // «видит телефоны всех клиентов и выгружает финансы». Владелец должен
+    // прочитать, что именно он отдаёт, до нажатия кнопки, а не после.
+    function describeRole() {
+      note.textContent = roleSelect.value === "owner"
+        ? "Полный доступ: база клиентов с телефонами, финансовый отчёт, рассылки всем клиентам, правка призов и начисление прокрутов, в том числе себе. Выдавайте только тому, кому доверяете деньги клуба."
+        : "Только касса: сможет проверять и гасить коды призов и начислять прокруты вручную. Кабинет с отчётами и базой клиентов ему не откроется.";
+    }
+
+    roleSelect.addEventListener("change", describeRole);
+    describeRole();
+
+    el.staffForm.appendChild(fill("foot", "Свой Telegram ID человек узнаёт командой /id в этом же боте."));
 
     add.addEventListener("click", function () {
       var id = Number(fId.input.value);
       if (!id) { toast("Введите ID", true); return; }
 
-      add.disabled = true;
-      api("/api/admin?r=staff", { method: "POST", body: { id: id, role: "staff", title: fTitle.input.value || null } })
-        .then(function () {
-          fId.input.value = "";
-          fTitle.input.value = "";
-          toast("Сотрудник добавлен");
-          haptic("success");
-          loadStaff();
+      var owner = roleSelect.value === "owner";
+
+      var go = function () {
+        add.disabled = true;
+        api("/api/admin?r=staff", {
+          method: "POST",
+          body: { id: id, role: roleSelect.value, title: fTitle.input.value || null }
         })
-        .catch(function (err) { toast("Ошибка: " + err.message, true); })
-        .then(function () { add.disabled = false; });
+          .then(function () {
+            fId.input.value = "";
+            fTitle.input.value = "";
+            toast(owner ? "Владелец добавлен" : "Сотрудник добавлен");
+            haptic("success");
+            loadStaff();
+          })
+          .catch(function (err) { toast("Ошибка: " + err.message, true); })
+          .then(function () { add.disabled = false; });
+      };
+
+      if (owner) {
+        askConfirm("Выдать полный доступ к кабинету? Этот человек увидит телефоны клиентов и всю финансовую статистику.", go);
+      } else {
+        go();
+      }
     });
   }
 
@@ -2833,16 +2874,25 @@
             member.role === "owner" ? "владелец · ID " + member.id : "сотрудник · ID " + member.id
           );
 
-          if (member.role !== "owner") {
+          if (Number(member.id) !== Number(myId())) {
             var del = document.createElement("button");
             del.className = "btn danger";
             del.type = "button";
             del.textContent = "Убрать";
             del.addEventListener("click", function () {
-              del.disabled = true;
-              api("/api/admin?r=staff&id=" + member.id, { method: "DELETE" })
-                .then(function () { toast("Убран"); loadStaff(); })
-                .catch(function (err) { toast("Ошибка: " + err.message, true); del.disabled = false; });
+              var who = member.title || ("ID " + member.id);
+
+              // Снятие владельца отбирает доступ ко всему кабинету, и
+              // человек об этом не узнает — только упрётся в закрытую
+              // вкладку. Поэтому спрашиваем.
+              askConfirm(member.role === "owner"
+                ? "Забрать полный доступ у «" + who + "»?"
+                : "Убрать «" + who + "» из персонала?", function () {
+                del.disabled = true;
+                api("/api/admin?r=staff&id=" + member.id, { method: "DELETE" })
+                  .then(function () { toast("Убран"); loadStaff(); })
+                  .catch(function (err) { toast("Ошибка: " + err.message, true); del.disabled = false; });
+              });
             });
             wrap.appendChild(del);
           }
