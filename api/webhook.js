@@ -220,7 +220,7 @@ async function sendStart(chatId, firstName, role) {
     text += "\n\n———\nВы вошли как " + (role === "owner" ? "владелец" : "сотрудник") + ". Команды: /help";
   }
 
-  const markup = { inline_keyboard: [[{ text: "🎰 Открыть рулетку", web_app: { url: WEBAPP_URL } }]] };
+  const markup = { inline_keyboard: [[{ text: "Крутить 🎰", web_app: { url: WEBAPP_URL } }]] };
 
   // С картинкой текст уходит подписью, а подпись у Telegram вчетверо
   // короче сообщения — обрезку делает сам sendPhoto, но лучше не
