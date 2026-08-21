@@ -81,6 +81,10 @@ async function health() {
 
   return {
     ok: failed.length === 0,
+    // Какой коммит реально крутится на проде. Без этого убедиться, что
+    // серверная правка доехала, было нечем: снаружи видно только app.js,
+    // а он не меняется, когда правка лежит в api/ или lib/.
+    commit: (process.env.VERCEL_GIT_COMMIT_SHA || "").slice(0, 7) || null,
     modules: modules,
     failed: failed
   };
