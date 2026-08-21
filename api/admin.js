@@ -446,7 +446,7 @@ async function menu(req, res, auth) {
     return;
   }
 
-  const result = await setMenuButton(enable ? url : null, "Открыть рулетку", auth.user.id);
+  const result = await setMenuButton(enable ? url : null, "Крутить", auth.user.id);
 
   if (!result.ok) {
     res.status(502).json({ error: "telegram_error", reason: result.error });
