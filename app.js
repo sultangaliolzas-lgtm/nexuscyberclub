@@ -9,12 +9,15 @@
   // либо ?club= в URL (когда приложение открыто кнопкой из чата бота).
   var clubCode = resolveClubCode();
 
-  // Явный запрос на создание клуба: ?new=1 в адресе (или #new).
+  // Явный запрос на создание клуба: ?new=1 в адресе, либо ссылка бота
+  // t.me/<bot>?startapp=new (для холодных продаж — открывает сразу онбординг).
   function wantsNewClub() {
     try {
       if (new URLSearchParams(location.search).get("new") === "1") return true;
       if (/[?&#]new=1/.test(location.hash || "")) return true;
     } catch (e) {}
+    var sp = String(startParam || "").toLowerCase();
+    if (sp === "new" || sp === "newclub" || sp === "create") return true;
     return false;
   }
 
