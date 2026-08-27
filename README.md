@@ -1,4 +1,4 @@
-# Nexus Roulette
+# Клубная рулетка
 
 Telegram мини-апп для компьютерного клуба: клиент сканирует QR на ресепшене,
 крутит рулетку и забирает приз на стойке. Владелец видит в приложении, что
@@ -72,7 +72,7 @@ Settings → Environment Variables:
 | Имя | Значение |
 |---|---|
 | `BOT_TOKEN` | токен бота от BotFather |
-| `WEBAPP_URL` | адрес деплоя, например `https://nexuscyberclub.vercel.app` |
+| `WEBAPP_URL` | адрес деплоя, например `https://<ваш-домен>.vercel.app` |
 | `SUPABASE_URL` | Supabase → Settings → API → Project URL |
 | `SUPABASE_SERVICE_KEY` | там же, ключ `service_role` |
 | `OWNER_IDS` | *(необязательно)* запасной вход в кабинет, если таблица `staff` недоступна |

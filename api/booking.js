@@ -46,7 +46,7 @@ module.exports = async function handler(req, res) {
 
   // Бронь на этом этапе включена не у всех клубов (booking_enabled). Пока
   // она не сделана мультиарендной, у выключенных клубов отдаём пустоту —
-  // так их сотрудники не увидят чужих (Nexus) броней.
+  // так их сотрудники не увидят чужих броней первого клуба.
   if (!club.booking_enabled) {
     bookingDisabled(res, key);
     return;
