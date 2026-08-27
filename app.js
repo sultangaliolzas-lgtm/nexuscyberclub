@@ -11,7 +11,7 @@
     items: [],
     redeemed: [],
     sectors: [],
-    clubName: "NEXUS",
+    clubName: "",
     nextSpinAt: null,
     cap: 0,
     currency: "₸",
@@ -69,10 +69,10 @@
     // Конфиг колеса не зависит от чек-ина, поэтому тянем его сразу.
     api("/api/config")
       .then(function (cfg) {
-        state.clubName = cfg.clubName || "NEXUS";
+        state.clubName = cfg.clubName || "";
         state.sectors = cfg.sectors || [];
         el.clubName.textContent = state.clubName;
-        document.title = state.clubName + " Roulette";
+        document.title = state.clubName ? state.clubName + " Roulette" : "Рулетка";
         idleStrip();
       })
       .catch(function (err) { console.error("config:", err); });

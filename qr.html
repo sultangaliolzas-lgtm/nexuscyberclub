@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Nexus — QR для печати</title>
+<title>QR для печати</title>
 <style>
   :root { --ink: #0e0f13; --accent: #7a9e1f; }
   * { box-sizing: border-box; }
@@ -62,7 +62,7 @@
 </div>
 
 <div class="sticker">
-  <h1>NEXUS</h1>
+  <h1 id="clubName">Клуб</h1>
   <span class="tag">Компьютерный клуб</span>
 
   <div class="qr" id="qr"></div>
@@ -86,6 +86,18 @@
   var qrBox = document.getElementById("qr");
   var sourceInput = document.getElementById("source");
   var place = document.getElementById("place");
+  var clubName = document.getElementById("clubName");
+
+  // Название клуба тянем из настроек, чтобы наклейка не была зашита под один клуб.
+  fetch("/api/config")
+    .then(function (r) { return r.ok ? r.json() : null; })
+    .then(function (cfg) {
+      if (cfg && cfg.clubName) {
+        clubName.textContent = cfg.clubName;
+        document.title = cfg.clubName + " — QR для печати";
+      }
+    })
+    .catch(function () {});
 
   document.getElementById("reload").addEventListener("click", load);
   document.getElementById("print").addEventListener("click", function () { window.print(); });

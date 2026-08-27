@@ -225,7 +225,7 @@ async function settings(req, res, auth) {
   const patch = {};
 
   if (body.club_name !== undefined) {
-    patch.club_name = String(body.club_name).slice(0, 40) || "NEXUS";
+    patch.club_name = String(body.club_name).slice(0, 40) || "Клуб";
   }
   if (body.spin_cooldown_hours !== undefined) {
     patch.spin_cooldown_hours = clampInt(body.spin_cooldown_hours, 0, 720);
@@ -570,7 +570,7 @@ async function exportCsv(req, res, auth) {
   }
 
   const csv = toCsv(rows);
-  const name = "nexus-" + days + "d-" + new Date().toISOString().slice(0, 10) + ".csv";
+  const name = "roulette-" + days + "d-" + new Date().toISOString().slice(0, 10) + ".csv";
   const sent = await sendDocument(auth.user.id, name, csv, "Отчёт по призам за " + days + " дн. Строк: " + rows.length);
 
   res.status(200).json({ ok: sent, rows: rows.length, sent: sent });

@@ -118,7 +118,7 @@ on conflict (key) do nothing;
 
 create table if not exists settings (
   id int primary key default 1,
-  club_name text not null default 'NEXUS',
+  club_name text not null default 'Клуб',
   spin_cooldown_hours int not null default 24, -- как часто QR даёт новый прокрут
   checkin_enabled boolean not null default true,
   max_unused_prizes int not null default 5,    -- 0 = без ограничения
