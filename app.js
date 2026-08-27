@@ -9,6 +9,15 @@
   // либо ?club= в URL (когда приложение открыто кнопкой из чата бота).
   var clubCode = resolveClubCode();
 
+  // Явный запрос на создание клуба: ?new=1 в адресе (или #new).
+  function wantsNewClub() {
+    try {
+      if (new URLSearchParams(location.search).get("new") === "1") return true;
+      if (/[?&#]new=1/.test(location.hash || "")) return true;
+    } catch (e) {}
+    return false;
+  }
+
   function resolveClubCode() {
     var fromStart = String(startParam || "").replace(/[^a-zA-Z0-9_-]/g, "");
     if (fromStart.length >= 6) return fromStart.slice(0, 6).toLowerCase();
@@ -82,6 +91,12 @@
     bindOnboarding();
     el.spinBtn.addEventListener("click", handleSpin);
     el.resultCode.addEventListener("click", function () { copy(el.resultCode.dataset.code); });
+
+    // Явный вход на создание клуба (?new=1) — в обход клуба по умолчанию.
+    if (wantsNewClub()) {
+      showOnboarding("new");
+      return;
+    }
 
     // Конфиг клуба. Код мог не прийти (старая ссылка первого клуба без
     // кода) — тогда сервер вернёт клуб по умолчанию, и мы примем его код.
