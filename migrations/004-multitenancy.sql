@@ -107,7 +107,10 @@ begin
       from pg_constraint con
       join pg_class cl on cl.oid = con.conrelid
       join pg_class rf on rf.oid = con.confrelid
-     where con.contype = 'f' and rf.relname = 'users'
+     where con.contype = 'f'
+       and rf.relname = 'users'
+       and cl.relnamespace = 'public'::regnamespace
+       and rf.relnamespace = 'public'::regnamespace
   loop
     execute format('alter table %I drop constraint %I', r.tbl, r.conname);
   end loop;
@@ -122,6 +125,7 @@ begin
       from pg_constraint con
       join pg_class cl on cl.oid = con.conrelid
      where con.contype in ('p')
+       and cl.relnamespace = 'public'::regnamespace
        and cl.relname in ('users','prizes','settings','staff','broadcast_recipients')
   loop
     execute format('alter table %I drop constraint %I', r.tbl, r.conname);
