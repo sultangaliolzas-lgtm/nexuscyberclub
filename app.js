@@ -83,19 +83,17 @@
     el.spinBtn.addEventListener("click", handleSpin);
     el.resultCode.addEventListener("click", function () { copy(el.resultCode.dataset.code); });
 
-    // Без кода клуба показываем экран создания/поиска клуба, а не рулетку.
-    if (!clubCode) {
-      showOnboarding("new");
-      return;
-    }
-
-    // Конфиг колеса конкретного клуба.
-    api("/api/config?club=" + encodeURIComponent(clubCode))
+    // Конфиг клуба. Код мог не прийти (старая ссылка первого клуба без
+    // кода) — тогда сервер вернёт клуб по умолчанию, и мы примем его код.
+    api("/api/config?club=" + encodeURIComponent(clubCode || ""))
       .then(function (cfg) {
         if (!cfg || cfg.clubKnown === false) {
-          showOnboarding("notfound");
+          showOnboarding(clubCode ? "notfound" : "new");
           return;
         }
+
+        // Приняли код клуба — дальше он уйдёт в заголовке x-club-code.
+        if (cfg.code) clubCode = cfg.code;
 
         state.clubName = cfg.clubName || "";
         state.sectors = cfg.sectors || [];

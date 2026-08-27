@@ -19,7 +19,10 @@ module.exports = async function handler(req, res) {
 
   try {
     const code = (req.query && req.query.club) || null;
-    const club = code ? await db.getClubByCode(code) : null;
+    let club = code ? await db.getClubByCode(code) : null;
+    // Нет кода или клуб не найден — пробуем клуб по умолчанию (переходный
+    // период, старые ссылки первого клуба ещё без кода).
+    if (!club) club = await db.getFallbackClub();
 
     if (!club) {
       // Без валидного клуба отдаём пустую витрину, а не 404: приложение
@@ -35,6 +38,7 @@ module.exports = async function handler(req, res) {
 
     res.status(200).json({
       clubKnown: true,
+      code: club.code,
       clubName: settings.club_name,
       status: club.status,                     // active | frozen
       bookingEnabled: Boolean(club.booking_enabled),
