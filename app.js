@@ -101,9 +101,30 @@
       return;
     }
 
+    // Вход без кода клуба (обычная кнопка бота, а не ссылка/QR): если
+    // человек — владелец ровно одного своего клуба, ведём его сразу в этот
+    // клуб, а не в клуб по умолчанию. Клиенты (не владеют клубом) как и
+    // раньше попадают в клуб по умолчанию.
+    if (!clubCode) {
+      api("/api/tenant?r=mine")
+        .then(function (res) {
+          var owned = (res && res.clubs) || [];
+          if (owned.length === 1 && owned[0].code) clubCode = owned[0].code;
+        })
+        .catch(function () {})
+        .then(function () { loadClubConfig(Boolean(startParam)); });
+      return;
+    }
+
+    loadClubConfig(Boolean(startParam));
+  }
+
+  // Загружает витрину клуба (имя, сектора, статус) и состояние клиента.
+  // doCheckin=true — засчитать визит (приход по QR со start_param).
+  function loadClubConfig(doCheckin) {
     // Конфиг клуба. Код мог не прийти (старая ссылка первого клуба без
     // кода) — тогда сервер вернёт клуб по умолчанию, и мы примем его код.
-    api("/api/config?club=" + encodeURIComponent(clubCode || ""))
+    return api("/api/config?club=" + encodeURIComponent(clubCode || ""))
       .then(function (cfg) {
         if (!cfg || cfg.clubKnown === false) {
           showOnboarding(clubCode ? "notfound" : "new");
@@ -127,15 +148,28 @@
         }
 
         // Пришли по QR — начисляем прокрут до того, как покажем баланс.
-        var first = startParam
+        var first = doCheckin
           ? api("/api/checkin", { method: "POST" }).then(showCheckin).catch(function (err) {
               console.error("checkin:", err);
             })
           : Promise.resolve();
 
-        first.then(loadState);
+        return first.then(loadState);
       })
       .catch(function (err) { console.error("config:", err); });
+  }
+
+  // Войти в только что созданный клуб владельцем, не переоткрывая бот:
+  // переключаем контекст на новый код и грузим кабинет (роль придёт owner,
+  // вкладка «Админ» появится сама).
+  function enterClub(code) {
+    clubCode = code;
+    var onb = document.getElementById("view-onboarding");
+    if (onb) onb.hidden = true;
+    if (el.tabs) el.tabs.hidden = false;
+    setTab("wheel");
+    el.banner.hidden = true;
+    loadClubConfig(false);
   }
 
   function loadState() {
@@ -252,6 +286,8 @@
           link.textContent = club.link;
           link.onclick = function () { copy(club.link); };
         }
+        var enter = document.getElementById("onbEnter");
+        if (enter && club.code) enter.onclick = function () { enterClub(club.code); };
       })
       .catch(function (err) {
         if (btn) { btn.disabled = false; btn.textContent = "Создать клуб"; }
