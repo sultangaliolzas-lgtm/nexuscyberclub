@@ -1,27 +1,43 @@
 const db = require("../lib/db");
 const { methodGuard } = require("../lib/guard");
 
-// Сектора колеса и название клуба. Один источник правды: колесо рисуется
-// из тех же строк prizes, по которым сервер разыгрывает приз, поэтому
-// правка веса в кабинете сразу меняет и шанс, и ширину сектора.
+// Сектора колеса и название клуба — для конкретного клуба (?club=<code>).
+// Один источник правды: колесо рисуется из тех же строк prizes, по
+// которым сервер разыгрывает приз, поэтому правка веса в кабинете сразу
+// меняет и шанс, и ширину сектора.
+//
+// Ручка публичная (без подписи Telegram): отдаёт только витрину клуба
+// (имя и призы), которая и так видна каждому, кто открыл ссылку.
 module.exports = async function handler(req, res) {
   if (!methodGuard(req, res, ["GET"])) return;
 
-  // Проверка состояния схемы. Все остальные ручки закрыты подписью
-  // Telegram, поэтому убедиться снаружи, что schema.sql выполнен, было
-  // нечем — приходилось каждый раз просить владельца открыть вкладку и
-  // рассказать, что он видит. Наружу уходят только имена таблиц, никаких
-  // данных клуба.
+  // Проверка состояния схемы. Наружу уходят только имена таблиц.
   if (req.query && req.query.health) {
     res.status(200).json(await health());
     return;
   }
 
   try {
-    const [settings, prizes] = await Promise.all([db.getSettings(), db.getPrizes(true)]);
+    const code = (req.query && req.query.club) || null;
+    const club = code ? await db.getClubByCode(code) : null;
+
+    if (!club) {
+      // Без валидного клуба отдаём пустую витрину, а не 404: приложение
+      // покажет экран «создать клуб» / «клуб не найден».
+      res.status(200).json({ clubName: null, sectors: [], clubKnown: false });
+      return;
+    }
+
+    const [settings, prizes] = await Promise.all([
+      db.getSettings(club.id),
+      db.getPrizes(club.id, true)
+    ]);
 
     res.status(200).json({
+      clubKnown: true,
       clubName: settings.club_name,
+      status: club.status,                     // active | frozen
+      bookingEnabled: Boolean(club.booking_enabled),
       sectors: prizes
         .filter((p) => p.weight > 0)
         .map((p) => ({
@@ -44,18 +60,19 @@ module.exports = async function handler(req, res) {
 // Функции с побочными эффектами сюда не попадают намеренно: вызов
 // due_reminders разослал бы клиентам настоящие напоминания.
 const CHECKS = [
+  { module: "tenancy",       table: "clubs",       select: "code" },
+  { module: "tenancy",       table: "settings",    select: "club_id" },
+  { module: "tenancy",       table: "users",       select: "club_id" },
   { module: "prizes",        table: "prizes",      select: "key" },
   { module: "prizes",        table: "settings",    select: "currency" },
   { module: "notifications", table: "users",       select: "can_message" },
   { module: "notifications", table: "inventory",   select: "reminded_at" },
   { module: "broadcasts",    table: "broadcasts",  select: "photo_file_id" },
   { module: "welcome",       table: "settings",    select: "welcome_photo_file_id" },
-  { module: "broadcasts",    rpc: "audience_sizes" },
   { module: "booking",       table: "halls",       select: "name" },
   { module: "booking",       table: "seats",       select: "label" },
   { module: "booking",       table: "packages",    select: "price_per_hour" },
-  { module: "booking",       table: "bookings",    select: "period" },
-  { module: "booking",       rpc: "booking_config" }
+  { module: "booking",       table: "bookings",    select: "period" }
 ];
 
 async function health() {
@@ -81,9 +98,6 @@ async function health() {
 
   return {
     ok: failed.length === 0,
-    // Какой коммит реально крутится на проде. Без этого убедиться, что
-    // серверная правка доехала, было нечем: снаружи видно только app.js,
-    // а он не меняется, когда правка лежит в api/ или lib/.
     commit: (process.env.VERCEL_GIT_COMMIT_SHA || "").slice(0, 7) || null,
     modules: modules,
     failed: failed

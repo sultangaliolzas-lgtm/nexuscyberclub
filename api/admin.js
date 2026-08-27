@@ -64,9 +64,9 @@ module.exports = async function handler(req, res) {
 // Всё считается одной SQL-функцией: воронка по каждому призу
 // (выпал -> забрали -> висит на руках -> сгорел) плюс сводка за период.
 // Десяток REST-запросов был бы и медленнее, и несогласован по времени среза.
-async function stats(req, res) {
+async function stats(req, res, auth) {
   const days = clampDays(req.query && req.query.days);
-  const [data, activity] = await Promise.all([db.getStats(days), db.getActivity(30)]);
+  const [data, activity] = await Promise.all([db.getStats(auth.club.id, days), db.getActivity(auth.club.id, 30)]);
   res.status(200).json(Object.assign({ days: days }, data, { activity: activity }));
 }
 
@@ -98,7 +98,7 @@ const EDITABLE = {
 
 async function prizes(req, res, auth) {
   if (req.method === "GET") {
-    res.status(200).json({ prizes: await db.getPrizes(false) });
+    res.status(200).json({ prizes: await db.getPrizes(auth.club.id, false) });
     return;
   }
 
@@ -122,21 +122,21 @@ async function prizes(req, res, auth) {
 
   // Прежние значения нужны для истории изменений: владельцу важно
   // видеть не только что поменяли, но и с чего.
-  const before = (await db.getPrizes(false)).filter((p) => p.key === body.key)[0];
+  const before = (await db.getPrizes(auth.club.id, false)).filter((p) => p.key === body.key)[0];
 
-  const updated = await db.updatePrize(body.key, patch);
+  const updated = await db.updatePrize(auth.club.id, body.key, patch);
   if (!updated) {
     res.status(404).json({ error: "prize_not_found" });
     return;
   }
 
-  await logChanges(auth.user.id, "prize", body.key, before, patch);
+  await logChanges(auth.club.id, auth.user.id, "prize", body.key, before, patch);
   res.status(200).json({ prize: updated });
 }
 
 // Пишем только то, что действительно изменилось: иначе журнал забьётся
 // записями от нажатия "Сохранить" без правок.
-async function logChanges(actorId, entity, key, before, patch) {
+async function logChanges(clubId, actorId, entity, key, before, patch) {
   const changes = {};
 
   Object.keys(patch).forEach((field) => {
@@ -152,7 +152,7 @@ async function logChanges(actorId, entity, key, before, patch) {
     await db.request("config_log", {
       method: "POST",
       headers: { Prefer: "return=minimal" },
-      body: JSON.stringify([{ actor_id: actorId, entity: entity, entity_key: key, changes: changes }])
+      body: JSON.stringify([{ club_id: clubId, actor_id: actorId, entity: entity, entity_key: key, changes: changes }])
     });
   } catch (err) {
     // Журнал не должен ронять сохранение настройки.
@@ -174,15 +174,15 @@ function clampInt(v, min, max) {
 
 /* ---------------------------------------------------------- клиенты */
 
-async function clients(req, res) {
-  res.status(200).json({ clients: (await db.listClients(200)) || [] });
+async function clients(req, res, auth) {
+  res.status(200).json({ clients: (await db.listClients(auth.club.id, 200)) || [] });
 }
 
 /* ---------------------------------------------------------- персонал */
 
 async function staff(req, res, auth) {
   if (req.method === "GET") {
-    res.status(200).json({ staff: (await db.listStaff()) || [] });
+    res.status(200).json({ staff: (await db.listStaff(auth.club.id)) || [] });
     return;
   }
 
@@ -203,12 +203,12 @@ async function staff(req, res, auth) {
       res.status(400).json({ error: "cannot_remove_self" });
       return;
     }
-    await db.removeStaff(id);
+    await db.removeStaff(auth.club.id, id);
     res.status(200).json({ ok: true });
     return;
   }
 
-  await db.addStaff(id, body.role === "owner" ? "owner" : "staff",
+  await db.addStaff(auth.club.id, id, body.role === "owner" ? "owner" : "staff",
                     body.title ? String(body.title).slice(0, 40) : null);
   res.status(200).json({ ok: true });
 }
@@ -217,7 +217,7 @@ async function staff(req, res, auth) {
 
 async function settings(req, res, auth) {
   if (req.method === "GET") {
-    res.status(200).json({ settings: await db.getSettings() });
+    res.status(200).json({ settings: await db.getSettings(auth.club.id) });
     return;
   }
 
@@ -264,9 +264,9 @@ async function settings(req, res, auth) {
     return;
   }
 
-  const before = await db.getSettings();
-  const updated = await db.updateSettings(patch);
-  await logChanges(auth.user.id, "settings", "club", before, patch);
+  const before = await db.getSettings(auth.club.id);
+  const updated = await db.updateSettings(auth.club.id, patch);
+  await logChanges(auth.club.id, auth.user.id, "settings", "club", before, patch);
 
   res.status(200).json({ settings: updated });
 }
@@ -288,12 +288,13 @@ async function grant(req, res, auth) {
   // Потолок в 20 штук за раз — защита от лишнего нуля в поле ввода.
   const amount = clampInt(body.amount || 1, 1, 20);
 
-  if (!(await db.getUser(userId))) {
+  if (!(await db.getUser(auth.club.id, userId))) {
     res.status(404).json({ error: "client_not_found" });
     return;
   }
 
   const left = await db.rpc("do_grant", {
+    p_club_id: auth.club.id,
     p_user_id: userId,
     p_staff_id: auth.user.id,
     p_amount: amount
@@ -321,6 +322,7 @@ async function block(req, res, auth) {
   }
 
   const result = await db.rpc("set_blocked", {
+    p_club_id: auth.club.id,
     p_user_id: userId,
     p_actor_id: auth.user.id,
     p_blocked: Boolean(body.blocked),
@@ -332,8 +334,8 @@ async function block(req, res, auth) {
 
 /* ---------------------------------------------------------- история настроек */
 
-async function log(req, res) {
-  res.status(200).json({ log: (await db.rpc("admin_config_log", { p_limit: 60 })) || [] });
+async function log(req, res, auth) {
+  res.status(200).json({ log: (await db.rpc("admin_config_log", { p_club_id: auth.club.id, p_limit: 60 })) || [] });
 }
 
 /* ---------------------------------------------------------- напоминания */
@@ -341,8 +343,8 @@ async function log(req, res) {
 // Кнопка "отправить сейчас". Дёргает ровно ту же функцию, что и
 // ежедневная задача: владельцу не нужно ждать до утра, чтобы убедиться,
 // что напоминания вообще уходят.
-async function remind(req, res) {
-  const result = await runReminders();
+async function remind(req, res, auth) {
+  const result = await runReminders(auth.club.id);
   res.status(200).json(Object.assign({ ok: true }, result));
 }
 
@@ -355,9 +357,9 @@ async function remind(req, res) {
 async function broadcast(req, res, auth) {
   if (req.method === "GET") {
     const [list, sizes, unreachable] = await Promise.all([
-      db.rpc("list_broadcasts", { p_limit: 20 }),
-      db.rpc("audience_sizes", {}),
-      db.rpc("unreachable_clients", { p_limit: 60 })
+      db.rpc("list_broadcasts", { p_club_id: auth.club.id, p_limit: 20 }),
+      db.rpc("audience_sizes", { p_club_id: auth.club.id }),
+      db.rpc("unreachable_clients", { p_club_id: auth.club.id, p_limit: 60 })
     ]);
 
     res.status(200).json({
@@ -383,6 +385,7 @@ async function broadcast(req, res, auth) {
     }
 
     const created = await db.rpc("create_broadcast", {
+      p_club_id: auth.club.id,
       p_text: text,
       p_actor: auth.user.id,
       p_audience: String((req.body && req.body.audience) || "all"),
@@ -404,7 +407,7 @@ async function broadcast(req, res, auth) {
     return;
   }
 
-  const progress = await sendBroadcastBatch(id, 25);
+  const progress = await sendBroadcastBatch(auth.club.id, id, 25);
   if (progress && progress.error) {
     res.status(404).json(progress);
     return;
@@ -562,7 +565,7 @@ const EXPORT_COLUMNS = [
 // документ открывается в Excel одним нажатием и остаётся в переписке.
 async function exportCsv(req, res, auth) {
   const days = clampInt((req.query && req.query.days) || 30, 1, 365);
-  const rows = (await db.rpc("admin_export", { p_days: days })) || [];
+  const rows = (await db.rpc("admin_export", { p_club_id: auth.club.id, p_days: days })) || [];
 
   if (!rows.length) {
     res.status(200).json({ ok: false, reason: "empty" });

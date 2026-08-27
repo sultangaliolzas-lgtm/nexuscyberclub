@@ -1,5 +1,4 @@
 const db = require("../lib/db");
-const { roleOf } = require("../lib/guard");
 const { sendMessage, sendPhoto } = require("../lib/telegram");
 
 const BOT_TOKEN = process.env.BOT_TOKEN;
@@ -9,6 +8,9 @@ const ID_PATTERN = /^(\d{5,})(?:\s+(\d{1,2}))?$/;
 const USERNAME_PATTERN = /^(@[a-zA-Z0-9_]{5,})(?:\s+(\d{1,2}))?$/;
 const CODE_PATTERN = /^NX-[A-F0-9]{8}$/i;
 
+// Общий бот на все клубы. Клуб для конкретного сообщения определяется по
+// контексту: из полезной нагрузки /start, из кода приза (коды глобально
+// уникальны) или из принадлежности сотрудника к клубу (таблица staff).
 module.exports = async function handler(req, res) {
   if (req.method !== "POST") {
     res.status(200).send("ok");
@@ -25,8 +27,6 @@ module.exports = async function handler(req, res) {
     const update = req.body;
     const message = update && update.message;
 
-    // Клиент поделился номером. Telegram не отдаёт телефон в initData,
-    // это единственный законный способ его получить.
     if (message && message.contact) {
       await saveContact(message);
       res.status(200).send("ok");
@@ -38,85 +38,123 @@ module.exports = async function handler(req, res) {
       const fromId = message.from.id;
       const text = message.text.trim();
 
-      await db.upsertUser({
-        id: fromId,
+      // Раз человек сам написал боту — переписка открыта. Это факт уровня
+      // личности (общий бот один), поэтому пишем во все его карточки.
+      await db.touchUserEverywhere(fromId, {
         username: message.from.username || null,
         first_name: message.from.first_name || null,
-        // Раз клиент сам написал боту, переписка открыта и бот может
-        // писать первым. Мини-апп, открытый по ссылке t.me/bot?startapp,
-        // такого разрешения не даёт, поэтому сигнал именно отсюда.
         can_message: true
       });
 
-      const role = await roleOf(fromId);
+      const staffClubs = await db.getStaffClubs(fromId);
 
       if (text === "/start" || text.startsWith("/start ")) {
-        await sendStart(chatId, message.from.first_name || "", role);
-
-        const existing = await db.getUser(fromId);
-        if (!existing || !existing.phone) await askPhone(chatId);
+        await handleStart(chatId, message.from, text);
       } else if (text === "/id") {
         await sendId(chatId, message.from);
       } else if (text === "/help") {
-        await sendHelp(chatId, role);
-      } else if (role !== "client") {
-        await handleStaffMessage(chatId, fromId, text, role);
+        await sendHelp(chatId, staffClubs.length ? "staff" : "client");
+      } else if (staffClubs.length) {
+        await handleStaffMessage(chatId, fromId, text, staffClubs);
       }
     }
   } catch (err) {
     console.error("Webhook error:", err);
   }
 
-  // Telegram повторяет доставку на любой ответ кроме 200, поэтому
-  // отвечаем успехом даже на своей ошибке — иначе апдейт зациклится.
   res.status(200).send("ok");
 };
 
-async function handleStaffMessage(chatId, staffId, text, role) {
-  if (CODE_PATTERN.test(text)) {
-    await redeemCode(chatId, text, staffId);
+// /start <clubcode> — заводим человека в конкретный клуб и показываем его
+// приветствие. Без кода (просто /start) — общий экран платформы.
+async function handleStart(chatId, from, text) {
+  const payload = text.length > 6 ? text.slice(6).trim() : "";
+  const code = payload.toLowerCase().replace(/[^a-z0-9]/g, "").slice(0, 6);
+  const club = code ? await db.getClubByCode(code) : null;
+
+  if (!club) {
+    await sendMessage(
+      chatId,
+      "Это бот-рулетка для компьютерных клубов.\n\n" +
+        "Чтобы крутить, откройте приложение по ссылке или QR-коду вашего клуба — " +
+        "на ресепшене или в его сообществе."
+    );
     return;
   }
 
+  await db.ensureUser(club.id, from);
+
+  const member = await db.getStaffMember(club.id, from.id);
+  const role = member ? member.role : "client";
+  await sendStart(chatId, club, from.first_name || "", role);
+
+  const existing = await db.getUser(club.id, from.id);
+  if (!existing || !existing.phone) await askPhone(chatId);
+}
+
+async function handleStaffMessage(chatId, staffId, text, staffClubs) {
+  if (CODE_PATTERN.test(text)) {
+    await redeemCode(chatId, text, staffId, staffClubs);
+    return;
+  }
+
+  // Начисление прокрута идёт в клуб сотрудника. Если он сотрудник сразу
+  // нескольких клубов — по боту не угадать, в какой; отправляем в кассу.
+  if (staffClubs.length > 1) {
+    const byCmd = ID_PATTERN.test(text) || USERNAME_PATTERN.test(text);
+    if (byCmd) {
+      await sendMessage(chatId, "Вы сотрудник нескольких клубов — начислите прокрут через кассу в приложении нужного клуба.");
+      return;
+    }
+    await sendHelp(chatId, "staff");
+    return;
+  }
+
+  const clubId = staffClubs[0].club_id;
+
   const byId = ID_PATTERN.exec(text);
   if (byId) {
-    await grantSpin(chatId, Number(byId[1]), staffId, amountOf(byId[2]));
+    await grantSpin(chatId, clubId, Number(byId[1]), staffId, amountOf(byId[2]));
     return;
   }
 
   const byName = USERNAME_PATTERN.exec(text);
   if (byName) {
-    const userId = await db.resolveUserIdByUsername(byName[1]);
+    const userId = await db.resolveUserIdByUsername(clubId, byName[1]);
     if (!userId) {
       await sendMessage(
         chatId,
-        "Не нашёл клиента с юзернеймом " + byName[1] + ".\n" +
-          "Он должен хотя бы раз нажать /start в этом боте — либо используйте числовой ID (команда /id у клиента)."
+        "Не нашёл клиента с юзернеймом " + byName[1] + " в вашем клубе.\n" +
+          "Он должен хотя бы раз открыть рулетку клуба — либо используйте числовой ID (команда /id у клиента)."
       );
       return;
     }
-    await grantSpin(chatId, userId, staffId, amountOf(byName[2]));
+    await grantSpin(chatId, clubId, userId, staffId, amountOf(byName[2]));
     return;
   }
 
-  await sendHelp(chatId, role);
+  await sendHelp(chatId, "staff");
 }
 
-// Потолок в 20 штук — защита от опечатки вроде лишнего нуля.
 function amountOf(raw) {
   const n = Math.round(Number(raw));
   if (!isFinite(n) || n < 1) return 1;
   return Math.min(20, n);
 }
 
-async function grantSpin(chatId, userId, staffId, amount) {
+async function grantSpin(chatId, clubId, userId, staffId, amount) {
   try {
-    const existing = await db.getUser(userId);
+    const existing = await db.getUser(clubId, userId);
     if (!existing) {
-      await db.upsertUser({ id: userId, visits_available: 0 });
+      await db.upsertUser(clubId, { id: userId, visits_available: 0 });
     }
 
-    const left = await db.rpc("do_grant", { p_user_id: userId, p_staff_id: staffId, p_amount: amount });
+    const left = await db.rpc("do_grant", {
+      p_club_id: clubId,
+      p_user_id: userId,
+      p_staff_id: staffId,
+      p_amount: amount
+    });
 
     if (left === -1 || left === null) {
       await sendMessage(chatId, "Не получилось начислить прокрут. Проверьте ID.");
@@ -130,16 +168,30 @@ async function grantSpin(chatId, userId, staffId, amount) {
   }
 }
 
-async function redeemCode(chatId, code, staffId) {
+async function redeemCode(chatId, code, staffId, staffClubs) {
   try {
-    const result = await db.rpc("do_redeem", { p_code: code.toUpperCase(), p_staff_id: staffId });
+    // Клуб определяем по самому коду, затем проверяем, что отправитель —
+    // сотрудник именно этого клуба.
+    const clubId = await db.clubOfCode(code);
+    if (!clubId) {
+      await sendMessage(chatId, "❌ Код " + code.toUpperCase() + " не найден.");
+      return;
+    }
+
+    const allowed = staffClubs.some((s) => String(s.club_id) === String(clubId));
+    if (!allowed) {
+      await sendMessage(chatId, "Этот код относится к другому клубу — погасить его может только его сотрудник.");
+      return;
+    }
+
+    const result = await db.rpc("do_redeem", {
+      p_club_id: clubId,
+      p_code: code.toUpperCase(),
+      p_staff_id: staffId
+    });
 
     if (result && result.ok) {
-      await sendMessage(
-        chatId,
-        "✅ " + result.title + "\n\n" +
-          "Код погашен. Выдайте приз клиенту."
-      );
+      await sendMessage(chatId, "✅ " + result.title + "\n\nКод погашен. Выдайте приз клиенту.");
       return;
     }
 
@@ -158,8 +210,7 @@ async function redeemCode(chatId, code, staffId) {
   }
 }
 
-// Контактом можно поделиться и чужим, поэтому принимаем только свой:
-// user_id в контакте должен совпасть с отправителем.
+// Контактом можно поделиться и чужим, поэтому принимаем только свой.
 async function saveContact(message) {
   const contact = message.contact;
 
@@ -169,8 +220,8 @@ async function saveContact(message) {
   }
 
   try {
-    await db.upsertUser({
-      id: message.from.id,
+    // Телефон — свойство человека, а не клуба: пишем во все его карточки.
+    await db.touchUserEverywhere(message.from.id, {
       username: message.from.username || null,
       first_name: message.from.first_name || null,
       phone: contact.phone_number,
@@ -200,9 +251,6 @@ async function askPhone(chatId) {
   );
 }
 
-// Приветствие живёт в настройках, а не здесь: владелец правит текст и
-// картинку из кабинета, без деплоя. Хардкод остаётся запасным вариантом
-// на случай пустой настройки — бот не должен молчать на /start.
 const DEFAULT_WELCOME =
   "Привет{name}!\n\n" +
   "Это рулетка нашего компьютерного клуба.\n\n" +
@@ -210,8 +258,8 @@ const DEFAULT_WELCOME =
   "Выигрывай доп. время, скидки, снеки, напитки и VIP-места.\n\n" +
   "Призы забираются на стойке клуба: покажи код сотруднику.";
 
-async function sendStart(chatId, firstName, role) {
-  const settings = await db.getSettings();
+async function sendStart(chatId, club, firstName, role) {
+  const settings = await db.getSettings(club.id);
 
   let text = (settings.welcome_text || DEFAULT_WELCOME)
     .replace("{name}", firstName ? ", " + firstName : "");
@@ -220,11 +268,11 @@ async function sendStart(chatId, firstName, role) {
     text += "\n\n———\nВы вошли как " + (role === "owner" ? "владелец" : "сотрудник") + ". Команды: /help";
   }
 
-  const markup = { inline_keyboard: [[{ text: "Крутить 🎰", web_app: { url: WEBAPP_URL } }]] };
+  // Кнопка открывает приложение с кодом клуба в URL — так мини-апп,
+  // запущенный из чата (а не по startapp-ссылке), тоже знает свой клуб.
+  const url = WEBAPP_URL + (WEBAPP_URL.indexOf("?") === -1 ? "?" : "&") + "club=" + club.code;
+  const markup = { inline_keyboard: [[{ text: "Крутить 🎰", web_app: { url: url } }]] };
 
-  // С картинкой текст уходит подписью, а подпись у Telegram вчетверо
-  // короче сообщения — обрезку делает сам sendPhoto, но лучше не
-  // доводить: в кабинете показан счётчик.
   if (settings.welcome_photo_file_id) {
     await sendPhoto(chatId, settings.welcome_photo_file_id, text, markup);
     return;
@@ -256,9 +304,7 @@ async function sendHelp(chatId, role) {
       "• Пришлите числовой ID клиента — начислится один прокрут.\n" +
       "• Пришлите @юзернейм клиента — то же самое.\n" +
       "• Через пробел можно указать количество: 420115296 5\n\n" +
-      (role === "owner"
-        ? "Статистика, редактор призов и база клиентов — во вкладке «Админ» внутри приложения."
-        : "")
+      "Статистика, редактор призов и база клиентов — во вкладке «Админ» внутри приложения."
   );
 }
 
@@ -267,4 +313,3 @@ function formatDate(iso) {
   const d = new Date(iso);
   return d.toLocaleString("ru-RU", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
 }
-

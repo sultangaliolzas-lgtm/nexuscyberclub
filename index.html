@@ -29,6 +29,30 @@
       <span class="tagline">Бесплатная рулетка</span>
     </header>
 
+    <!-- ========================== ОНБОРДИНГ ========================== -->
+    <section id="view-onboarding" class="view" hidden>
+      <div class="onb">
+        <h2 class="section-title" id="onbTitle">Своя рулетка для клуба</h2>
+        <p class="foot" id="onbLead">Создайте пространство своего компьютерного клуба: своя база клиентов, призы и статистика. Клиенты попадут в него по вашей ссылке или QR.</p>
+
+        <div class="form" id="onbForm">
+          <div class="field">
+            <label for="onbName">Название клуба</label>
+            <input id="onbName" type="text" maxlength="40" placeholder="Например: Pulse Gaming Club" autocomplete="off">
+          </div>
+          <button class="btn" id="onbCreate" type="button">Создать клуб</button>
+          <p class="foot" id="onbError" hidden></p>
+        </div>
+
+        <div id="onbDone" hidden>
+          <h2 class="section-title">Клуб создан 🎉</h2>
+          <p class="foot">Ссылка для клиентов — её можно поставить в описание бота, сообщество или на наклейку с QR:</p>
+          <button class="result-code" id="onbLink" type="button"></button>
+          <p class="foot">Откройте эту ссылку сами, чтобы зайти в свой клуб как владелец — появится вкладка «Админ».</p>
+        </div>
+      </div>
+    </section>
+
     <!-- ============================ РУЛЕТКА ============================ -->
     <section id="view-wheel" class="view">
 

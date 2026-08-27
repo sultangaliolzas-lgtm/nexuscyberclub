@@ -1,14 +1,12 @@
 const db = require("../lib/db");
-const { authenticate, methodGuard } = require("../lib/guard");
+const { authenticate, clubContext, methodGuard } = require("../lib/guard");
 const { sendMessage, openAppMarkup } = require("../lib/telegram");
 
 // Клиент разрешил боту писать — Telegram.WebApp.requestWriteAccess
-// показал ему системное окно, и он нажал "Разрешить".
+// показал ему системное окно, и он нажал «Разрешить».
 //
-// Верить на слово нельзя: запрос сюда может прийти и мимо приложения.
-// Поэтому проверяем делом — пробуем отправить подтверждение. Дошло,
-// значит разрешение действительно есть. Заодно клиент сразу видит в
-// чате, что уведомления включились.
+// Верить на слово нельзя: проверяем делом — пробуем отправить
+// подтверждение. Дошло — значит разрешение действительно есть.
 module.exports = async function handler(req, res) {
   if (!methodGuard(req, res, ["POST"])) return;
 
@@ -18,8 +16,14 @@ module.exports = async function handler(req, res) {
     return;
   }
 
+  const club = await clubContext(req);
+  if (!club) {
+    res.status(400).json({ error: "no_club" });
+    return;
+  }
+
   try {
-    await db.ensureUser(auth.user);
+    await db.ensureUser(club.id, auth.user);
 
     const result = await sendMessage(
       auth.user.id,
@@ -29,7 +33,7 @@ module.exports = async function handler(req, res) {
       openAppMarkup("Открыть приложение")
     );
 
-    await db.setCanMessage([auth.user.id], result.ok);
+    await db.setCanMessage(club.id, [auth.user.id], result.ok);
 
     res.status(200).json({ ok: result.ok });
   } catch (err) {

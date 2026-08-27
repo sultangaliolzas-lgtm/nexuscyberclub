@@ -1,6 +1,6 @@
 const db = require("../lib/db");
 const fmt = require("../lib/fmt");
-const { authenticate, requireStaff, methodGuard } = require("../lib/guard");
+const { authenticate, requireStaff, clubContext, methodGuard } = require("../lib/guard");
 const { sendMessage, openAppMarkup } = require("../lib/telegram");
 
 // Бронирование мест — один файл на весь раздел по той же причине, что и
@@ -35,6 +35,24 @@ module.exports = async function handler(req, res) {
     return;
   }
 
+  // Клуб нужен и для проверки доступа к модулю брони, и чтобы не смешать
+  // данные разных клубов. У staff-роутов клуб уже в auth, у клиентских —
+  // берём из заголовка.
+  const club = auth.club || await clubContext(req);
+  if (!club) {
+    res.status(400).json({ error: "no_club" });
+    return;
+  }
+
+  // Бронь на этом этапе включена не у всех клубов (booking_enabled). Пока
+  // она не сделана мультиарендной, у выключенных клубов отдаём пустоту —
+  // так их сотрудники не увидят чужих (Nexus) броней.
+  if (!club.booking_enabled) {
+    bookingDisabled(res, key);
+    return;
+  }
+  auth.club = club;
+
   try {
     await route.handler(req, res, auth);
   } catch (err) {
@@ -42,6 +60,14 @@ module.exports = async function handler(req, res) {
     res.status(500).json({ error: "internal_error" });
   }
 };
+
+function bookingDisabled(res, key) {
+  res.setHeader("Cache-Control", "no-store");
+  if (key === "desk" || key === "mine") { res.status(200).json({ bookings: [] }); return; }
+  if (key === "layout") { res.status(200).json({ seats: [] }); return; }
+  if (key === "config") { res.status(200).json({ halls: [], packages: [], disabled: true }); return; }
+  res.status(403).json({ error: "booking_disabled" });
+}
 
 /* ---------------------------------------------------------- залы и тарифы */
 
@@ -100,7 +126,7 @@ async function create(req, res, auth) {
     return;
   }
 
-  await db.ensureUser(auth.user);
+  await db.ensureUser(auth.club.id, auth.user);
 
   const result = await db.rpc("create_booking", {
     p_user_id: auth.user.id,
@@ -119,7 +145,7 @@ async function create(req, res, auth) {
   // Уведомление уходит после ответа клиенту по смыслу, но до него по
   // коду: если Telegram не ответит, бронь всё равно уже в базе, и
   // терять её из-за упавшей отправки нельзя.
-  await notifyStaff(result).catch((err) => console.error("booking notify:", err));
+  await notifyStaff(auth.club.id, result).catch((err) => console.error("booking notify:", err));
 
   res.status(200).json({ booking: result });
 }
@@ -169,8 +195,8 @@ async function desk(req, res) {
 
 // Сотрудники узнают о брони сразу, а не открыв приложение: место может
 // понадобиться прибрать, а консоль — освободить от предыдущей компании.
-async function notifyStaff(booking) {
-  const [staff, settings] = await Promise.all([db.listStaff(), db.getSettings()]);
+async function notifyStaff(clubId, booking) {
+  const [staff, settings] = await Promise.all([db.listStaff(clubId), db.getSettings(clubId)]);
   if (!staff || !staff.length) return;
 
   const client = booking.client || {};
@@ -191,7 +217,7 @@ async function notifyStaff(booking) {
 
   for (const member of staff) {
     const result = await sendMessage(member.id, text, markup);
-    if (result.blocked) await db.setCanMessage([member.id], false);
+    if (result.blocked) await db.setCanMessage(clubId, [member.id], false);
   }
 }
 

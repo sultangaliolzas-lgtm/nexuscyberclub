@@ -5,6 +5,22 @@
   var initData = tg ? tg.initData : "";
   var startParam = tg && tg.initDataUnsafe ? tg.initDataUnsafe.start_param : null;
 
+  // Код клуба: первые 6 символов start_param (ссылка-startapp с наклейки),
+  // либо ?club= в URL (когда приложение открыто кнопкой из чата бота).
+  var clubCode = resolveClubCode();
+
+  function resolveClubCode() {
+    var fromStart = String(startParam || "").replace(/[^a-zA-Z0-9_-]/g, "");
+    if (fromStart.length >= 6) return fromStart.slice(0, 6).toLowerCase();
+    try {
+      var q = new URLSearchParams(location.search).get("club");
+      if (q) return q.toLowerCase().replace(/[^a-z0-9]/g, "").slice(0, 6);
+      var m = /[?&#]club=([a-z0-9]{6})/i.exec(location.hash || "");
+      if (m) return m[1].toLowerCase();
+    } catch (e) {}
+    return null;
+  }
+
   var state = {
     role: "client",
     spins: 0,
@@ -63,29 +79,47 @@
     bindTabs();
     bindDesk();
     bindExport();
+    bindOnboarding();
     el.spinBtn.addEventListener("click", handleSpin);
     el.resultCode.addEventListener("click", function () { copy(el.resultCode.dataset.code); });
 
-    // Конфиг колеса не зависит от чек-ина, поэтому тянем его сразу.
-    api("/api/config")
+    // Без кода клуба показываем экран создания/поиска клуба, а не рулетку.
+    if (!clubCode) {
+      showOnboarding("new");
+      return;
+    }
+
+    // Конфиг колеса конкретного клуба.
+    api("/api/config?club=" + encodeURIComponent(clubCode))
       .then(function (cfg) {
+        if (!cfg || cfg.clubKnown === false) {
+          showOnboarding("notfound");
+          return;
+        }
+
         state.clubName = cfg.clubName || "";
         state.sectors = cfg.sectors || [];
+        state.clubStatus = cfg.status || "active";
         el.clubName.textContent = state.clubName;
         document.title = state.clubName ? state.clubName + " Roulette" : "Рулетка";
         idleStrip();
+
+        if (cfg.status === "frozen") {
+          el.banner.textContent = "Клуб временно приостановлен. Загляните позже.";
+          el.banner.className = "banner neutral";
+          el.banner.hidden = false;
+        }
+
+        // Пришли по QR — начисляем прокрут до того, как покажем баланс.
+        var first = startParam
+          ? api("/api/checkin", { method: "POST" }).then(showCheckin).catch(function (err) {
+              console.error("checkin:", err);
+            })
+          : Promise.resolve();
+
+        first.then(loadState);
       })
       .catch(function (err) { console.error("config:", err); });
-
-    // Пришли по QR — начисляем прокрут до того, как покажем баланс,
-    // иначе клиент на секунду увидит ноль и решит, что не сработало.
-    var first = startParam
-      ? api("/api/checkin", { method: "POST" }).then(showCheckin).catch(function (err) {
-          console.error("checkin:", err);
-        })
-      : Promise.resolve();
-
-    first.then(loadState);
   }
 
   function loadState() {
@@ -106,6 +140,17 @@
         if (state.role === "owner") {
           document.querySelector('.tab[data-tab="admin"]').hidden = false;
         }
+
+        // Бронь на этом этапе доступна не всем клубам — прячем вкладку,
+        // если модуль у клуба выключен.
+        if (data.bookingEnabled === false) {
+          var bt = document.querySelector('.tab[data-tab="booking"]');
+          if (bt) bt.hidden = true;
+        }
+
+        // Страница печати QR должна знать код клуба.
+        var qrLink = document.getElementById("qrLink");
+        if (qrLink && clubCode) qrLink.href = "/qr?club=" + encodeURIComponent(clubCode);
 
         renderSpins();
         renderInventory();
@@ -137,11 +182,78 @@
     }
   }
 
+  /* ============================================================ онбординг */
+
+  // Показывается, когда клуб не определён: владелец создаёт свой клуб,
+  // клиент понимает, что нужна ссылка именно его клуба.
+  function showOnboarding(mode) {
+    ["view-wheel", "view-inventory", "view-booking", "view-desk", "view-admin"].forEach(function (id) {
+      var v = document.getElementById(id);
+      if (v) v.hidden = true;
+    });
+    if (el.tabs) el.tabs.hidden = true;
+
+    var view = document.getElementById("view-onboarding");
+    if (view) view.hidden = false;
+
+    if (mode === "notfound") {
+      var title = document.getElementById("onbTitle");
+      var lead = document.getElementById("onbLead");
+      if (title) title.textContent = "Клуб не найден";
+      if (lead) lead.textContent = "Ссылка ведёт на клуб, которого нет или он был удалён. Проверьте ссылку — или создайте свой клуб ниже.";
+    }
+  }
+
+  function bindOnboarding() {
+    var btn = document.getElementById("onbCreate");
+    if (btn) btn.addEventListener("click", createClub);
+  }
+
+  function createClub() {
+    var input = document.getElementById("onbName");
+    var errEl = document.getElementById("onbError");
+    var btn = document.getElementById("onbCreate");
+    var name = ((input && input.value) || "").trim();
+
+    if (errEl) errEl.hidden = true;
+    if (!name) {
+      if (errEl) { errEl.textContent = "Введите название клуба."; errEl.hidden = false; }
+      return;
+    }
+
+    if (btn) { btn.disabled = true; btn.textContent = "Создаём..."; }
+
+    api("/api/tenant?r=create", { method: "POST", body: { name: name } })
+      .then(function (res) {
+        var club = res && res.club;
+        if (!club) throw new Error("no club");
+        var form = document.getElementById("onbForm");
+        var done = document.getElementById("onbDone");
+        var link = document.getElementById("onbLink");
+        if (form) form.hidden = true;
+        if (done) done.hidden = false;
+        if (link && club.link) {
+          link.textContent = club.link;
+          link.onclick = function () { copy(club.link); };
+        }
+      })
+      .catch(function (err) {
+        if (btn) { btn.disabled = false; btn.textContent = "Создать клуб"; }
+        if (errEl) {
+          errEl.textContent = (err && err.data && err.data.error === "too_many_clubs")
+            ? "Достигнут лимит клубов на один аккаунт."
+            : "Не получилось создать клуб. Попробуйте ещё раз.";
+          errEl.hidden = false;
+        }
+      });
+  }
+
   /* ============================================================ сеть */
 
   function api(path, options) {
     var opts = options || {};
     var headers = { "X-Telegram-Init-Data": initData };
+    if (clubCode) headers["X-Club-Code"] = clubCode;
     if (opts.body) headers["Content-Type"] = "application/json";
 
     return fetch(path, {

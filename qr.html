@@ -88,16 +88,26 @@
   var place = document.getElementById("place");
   var clubName = document.getElementById("clubName");
 
-  // Название клуба тянем из настроек, чтобы наклейка не была зашита под один клуб.
-  fetch("/api/config")
-    .then(function (r) { return r.ok ? r.json() : null; })
-    .then(function (cfg) {
-      if (cfg && cfg.clubName) {
-        clubName.textContent = cfg.clubName;
-        document.title = cfg.clubName + " — QR для печати";
-      }
-    })
-    .catch(function () {});
+  // Код клуба берём из адреса страницы (?club=...). Открывается из кабинета
+  // владельца — ссылка уже содержит нужный код.
+  var club = "";
+  try {
+    club = (new URLSearchParams(location.search).get("club") || "")
+      .toLowerCase().replace(/[^a-z0-9]/g, "").slice(0, 6);
+  } catch (e) {}
+
+  // Название клуба тянем из его настроек, чтобы наклейка не была зашита под один клуб.
+  if (club) {
+    fetch("/api/config?club=" + encodeURIComponent(club))
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (cfg) {
+        if (cfg && cfg.clubName) {
+          clubName.textContent = cfg.clubName;
+          document.title = cfg.clubName + " — QR для печати";
+        }
+      })
+      .catch(function () {});
+  }
 
   document.getElementById("reload").addEventListener("click", load);
   document.getElementById("print").addEventListener("click", function () { window.print(); });
@@ -111,7 +121,7 @@
     place.textContent = "точка: " + source;
     qrBox.innerHTML = "";
 
-    fetch("/api/qr?source=" + encodeURIComponent(source))
+    fetch("/api/qr?club=" + encodeURIComponent(club) + "&source=" + encodeURIComponent(source))
       .then(function (r) {
         if (!r.ok) throw new Error("HTTP " + r.status);
         return r.text();

@@ -3,11 +3,11 @@ const { botUsername } = require("../lib/telegram");
 
 const CODE_PATTERN = /^NX-[A-F0-9]{8}$/;
 
-// Отдаёт QR-код наклейки для ресепшена.
+// Отдаёт QR-код наклейки для ресепшена конкретного клуба.
 //
-// Ссылка вида t.me/<bot>?startapp=<метка> открывает мини-апп в одно
-// действие: клиент наводит камеру -> открывается Telegram -> сразу
-// приложение с уже начисленным прокрутом.
+// Ссылка вида t.me/<bot>?startapp=<clubcode><source> открывает мини-апп
+// в одно действие и сразу попадает в нужный клуб: первые 6 символов
+// start_param — код клуба, остаток — метка точки размещения.
 module.exports = async function handler(req, res) {
   if (req.method !== "GET") {
     res.status(405).json({ error: "method_not_allowed" });
@@ -15,8 +15,7 @@ module.exports = async function handler(req, res) {
   }
 
   // Второй режим: QR с кодом приза, чтобы сотрудник сканировал его
-  // с экрана клиента вместо набора вручную. Секретом код не является —
-  // чтобы нарисовать такой QR, его нужно уже знать.
+  // с экрана клиента. Секретом код не является.
   const rawCode = String((req.query && req.query.code) || "").toUpperCase();
   if (rawCode) {
     if (!CODE_PATTERN.test(rawCode)) {
@@ -24,6 +23,12 @@ module.exports = async function handler(req, res) {
       return;
     }
     await renderQr(res, rawCode);
+    return;
+  }
+
+  const club = normalizeClub(req.query && req.query.club);
+  if (!club) {
+    res.status(400).json({ error: "club_required" });
     return;
   }
 
@@ -36,11 +41,11 @@ module.exports = async function handler(req, res) {
       return;
     }
 
-    const link = "https://t.me/" + username + "?startapp=" + source;
+    const link = "https://t.me/" + username + "?startapp=" + club + source;
 
     if (req.query && req.query.format === "json") {
       res.setHeader("Cache-Control", "no-store");
-      res.status(200).json({ link: link, source: source, username: username });
+      res.status(200).json({ link: link, source: source, club: club, username: username });
       return;
     }
 
@@ -64,6 +69,10 @@ async function renderQr(res, text) {
   res.status(200).send(svg);
 }
 
+function normalizeClub(raw) {
+  const clean = String(raw || "").toLowerCase().replace(/[^a-z0-9]/g, "").slice(0, 6);
+  return clean.length === 6 ? clean : null;
+}
 
 function normalizeSource(raw) {
   if (!raw) return "r1";
