@@ -175,6 +175,7 @@
         <button class="seg" data-pane="clients" type="button">Клиенты</button>
         <button class="seg" data-pane="comms" type="button">Связь</button>
         <button class="seg" data-pane="team" type="button">Клуб</button>
+        <button class="seg" data-pane="platform" type="button" id="platformSeg" hidden>Платформа</button>
       </div>
 
       <!-- отчёт -->
@@ -339,6 +340,13 @@
         <h2 class="section-title">Персонал</h2>
         <div class="form" id="staffForm"></div>
         <ul class="cards compact" id="staffList"></ul>
+      </div>
+
+      <!-- платформа: все подключённые клубы (видит только оператор) -->
+      <div class="pane" id="pane-platform" hidden>
+        <h2 class="section-title">Подключённые клубы</h2>
+        <p class="foot" id="platformFoot">Все клубы, созданные в приложении: кто подключился, когда и сколько у них клиентов.</p>
+        <ul class="cards compact" id="platformList"></ul>
       </div>
 
     </section>

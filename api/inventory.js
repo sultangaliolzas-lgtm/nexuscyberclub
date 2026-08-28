@@ -1,5 +1,5 @@
 const db = require("../lib/db");
-const { authenticate, clubContext, roleOf, methodGuard } = require("../lib/guard");
+const { authenticate, clubContext, roleOf, isPlatformOwner, methodGuard } = require("../lib/guard");
 const { botUsername } = require("../lib/telegram");
 
 // Стартовое состояние мини-аппа для клиента конкретного клуба: сколько
@@ -39,6 +39,7 @@ module.exports = async function handler(req, res) {
 
     res.status(200).json({
       role: role,
+      platform: isPlatformOwner(auth.user.id),
       clubStatus: club.status,
       bookingEnabled: Boolean(club.booking_enabled),
       spinsAvailable: user ? user.visits_available : 0,

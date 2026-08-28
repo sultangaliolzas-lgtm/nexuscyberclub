@@ -1,11 +1,12 @@
 const db = require("../lib/db");
-const { authenticate, methodGuard } = require("../lib/guard");
+const { authenticate, isPlatformOwner, methodGuard } = require("../lib/guard");
 const { botUsername } = require("../lib/telegram");
 
 // Самообслуживание клубов: создать свой клуб и посмотреть список своих.
 // Отдельный роутер, чтобы уложиться в лимит функций Vercel.
 //   POST /api/tenant?r=create   — создать клуб
 //   GET  /api/tenant?r=mine     — клубы, где я владелец
+//   GET  /api/tenant?r=all      — все клубы платформы (только оператор)
 const MAX_CLUBS_PER_OWNER = 3;
 
 module.exports = async function handler(req, res) {
@@ -22,6 +23,10 @@ module.exports = async function handler(req, res) {
   try {
     if (r === "mine" && req.method === "GET") {
       await mine(req, res, auth);
+      return;
+    }
+    if (r === "all" && req.method === "GET") {
+      await all(req, res, auth);
       return;
     }
     if (r === "create" && req.method === "POST") {
@@ -42,6 +47,38 @@ async function mine(req, res, auth) {
     .filter((s) => s.role === "owner" && s.clubs)
     .map((s) => shape(s.clubs, bot));
   res.status(200).json({ clubs: owned });
+}
+
+// Список всех подключённых клубов — только оператору платформы. Владелец
+// обычного клуба сюда не пройдёт (видит лишь свой клуб через r=mine).
+async function all(req, res, auth) {
+  if (!isPlatformOwner(auth.user.id)) {
+    res.status(403).json({ error: "forbidden" });
+    return;
+  }
+
+  const rows = await db.listAllClubs();
+  const bot = await botUsername();
+  const clubs = rows.map((c) => ({
+    code: c.code,
+    name: c.name,
+    ownerTgId: c.owner_tg_id,
+    plan: c.plan,
+    status: c.status,
+    createdAt: c.created_at,
+    paidUntil: c.paid_until,
+    bookingEnabled: Boolean(c.booking_enabled),
+    clients: count(c.users),
+    prizesOut: count(c.inventory),
+    link: bot ? "https://t.me/" + bot + "?startapp=" + c.code : null
+  }));
+
+  res.status(200).json({ clubs: clubs, total: clubs.length });
+}
+
+// PostgREST возвращает встроенный агрегат как [{ count: N }].
+function count(embed) {
+  return (embed && embed[0] && embed[0].count) || 0;
 }
 
 async function create(req, res, auth) {

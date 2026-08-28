@@ -191,6 +191,15 @@
           document.querySelector('.tab[data-tab="admin"]').hidden = false;
         }
 
+        // Оператор платформы видит вкладку «Админ» и в ней — сегмент
+        // «Платформа» со списком всех подключённых клубов.
+        state.platform = data.platform === true;
+        if (state.platform) {
+          document.querySelector('.tab[data-tab="admin"]').hidden = false;
+          var pseg = document.getElementById("platformSeg");
+          if (pseg) pseg.hidden = false;
+        }
+
         // Бронь на этом этапе доступна не всем клубам — прячем вкладку,
         // если модуль у клуба выключен.
         if (data.bookingEnabled === false) {
@@ -416,18 +425,87 @@
 
   function setAdminPane(pane) {
     markActive(el.adminNav, el.adminNav.querySelector('[data-pane="' + pane + '"]'));
-    ["stats", "prizes", "clients", "comms", "team"].forEach(function (name) {
-      document.getElementById("pane-" + name).hidden = name !== pane;
+    ["stats", "prizes", "clients", "comms", "team", "platform"].forEach(function (name) {
+      var p = document.getElementById("pane-" + name);
+      if (p) p.hidden = name !== pane;
     });
     if (pane === "prizes") loadPrizes();
     if (pane === "clients") loadClients();
     if (pane === "comms") loadComms();
     if (pane === "team") loadTeam();
+    if (pane === "platform") loadPlatform();
   }
 
   function markActive(container, btn) {
     container.querySelectorAll(".seg").forEach(function (b) { b.classList.remove("active"); });
     if (btn) btn.classList.add("active");
+  }
+
+  /* ============================================================ платформа */
+
+  // Список всех подключённых клубов — только для оператора платформы
+  // (сервер отдаёт данные лишь супер-админу из OWNER_IDS).
+  function loadPlatform() {
+    var list = document.getElementById("platformList");
+    var foot = document.getElementById("platformFoot");
+    if (!list) return;
+    list.innerHTML = '<p class="skeleton">Загружаем...</p>';
+
+    api("/api/tenant?r=all")
+      .then(function (res) {
+        var clubs = (res && res.clubs) || [];
+        list.innerHTML = "";
+
+        if (foot) {
+          foot.textContent = clubs.length
+            ? "Всего клубов: " + clubs.length + ". Тапни ссылку, чтобы скопировать."
+            : "Пока никто не подключился.";
+        }
+        if (!clubs.length) {
+          list.appendChild(fill("skeleton", "Здесь появятся клубы, как только владельцы их создадут."));
+          return;
+        }
+
+        clubs.forEach(function (c) { list.appendChild(platformCard(c)); });
+      })
+      .catch(function (err) {
+        list.innerHTML = "";
+        list.appendChild(fill("skeleton", "Не удалось загрузить: " + err.message));
+      });
+  }
+
+  function platformCard(c) {
+    var li = document.createElement("li");
+    li.className = "card" + (c.status === "frozen" ? " blocked" : "");
+
+    var title = document.createElement("span");
+    title.appendChild(span(null, c.name || "Без названия"));
+    title.appendChild(span("badge", c.plan === "paid" ? "платный" : "триал"));
+    if (c.status === "frozen") title.appendChild(span("badge", "заморожен"));
+
+    var parts = [
+      "код: " + c.code,
+      "клиентов: " + c.clients,
+      "призов выдано: " + c.prizesOut,
+      "создан " + ago(c.createdAt)
+    ];
+
+    var wrap = row("🏢", "", parts.join(" · "), null);
+    var titleSlot = wrap.querySelector(".card-title");
+    titleSlot.textContent = "";
+    titleSlot.appendChild(title);
+    li.appendChild(wrap);
+
+    if (c.link) {
+      var linkBtn = document.createElement("button");
+      linkBtn.className = "result-code";
+      linkBtn.type = "button";
+      linkBtn.textContent = c.link;
+      linkBtn.addEventListener("click", function () { copy(c.link); });
+      li.appendChild(linkBtn);
+    }
+
+    return li;
   }
 
   /* ============================================================ лента призов */
