@@ -34,6 +34,10 @@ module.exports = async function handler(req, res) {
       await remove(req, res, auth);
       return;
     }
+    if (r === "activate" && req.method === "POST") {
+      await activate(req, res, auth);
+      return;
+    }
     if (r === "create" && req.method === "POST") {
       await create(req, res, auth);
       return;
@@ -113,6 +117,25 @@ async function remove(req, res, auth) {
 
   await db.deleteClub(club.id);
   res.status(200).json({ ok: true, code: club.code });
+}
+
+// Активация/продление клуба вручную — только оператору. Снимает заморозку и
+// продлевает оплаченный доступ на N дней (по умолчанию неделя).
+async function activate(req, res, auth) {
+  if (!isPlatformOwner(auth.user.id)) {
+    res.status(403).json({ error: "forbidden" });
+    return;
+  }
+
+  const code = String((req.body && req.body.code) || "").trim();
+  const club = code ? await db.getClubByCode(code) : null;
+  if (!club) {
+    res.status(404).json({ error: "club_not_found" });
+    return;
+  }
+
+  const rows = await db.activateClub(club.id, req.body && req.body.days);
+  res.status(200).json({ ok: true, code: club.code, paidUntil: rows && rows[0] ? rows[0].paid_until : null });
 }
 
 async function create(req, res, auth) {

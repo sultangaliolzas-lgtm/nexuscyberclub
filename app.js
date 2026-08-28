@@ -582,6 +582,28 @@
       li.appendChild(linkBtn);
     }
 
+    // Активировать / продлить неделю: снимает заморозку и даёт оплаченный
+    // доступ ещё на 7 дней (ручная замена оплаты до биллинга Tribute).
+    if (!c.isDefault) {
+      var act = document.createElement("button");
+      act.className = "btn ghost";
+      act.type = "button";
+      act.textContent = c.status === "frozen" ? "Активировать (+7 дн)" : "Продлить неделю";
+      act.addEventListener("click", function () {
+        act.disabled = true;
+        var prev = act.textContent;
+        act.textContent = "Готовим...";
+        api("/api/tenant?r=activate", { method: "POST", body: { code: c.code, days: 7 } })
+          .then(function () { toast("Клуб активирован на неделю"); loadPlatform(); })
+          .catch(function (err) {
+            act.disabled = false;
+            act.textContent = prev;
+            toast("Не удалось: " + err.message, true);
+          });
+      });
+      li.appendChild(act);
+    }
+
     // Удаление клуба — необратимо; дефолтный (первый) клуб удалить нельзя.
     if (!c.isDefault) {
       var del = document.createElement("button");
