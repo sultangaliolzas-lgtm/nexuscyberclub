@@ -7,6 +7,7 @@ const { botUsername } = require("../lib/telegram");
 //   POST /api/tenant?r=create   — создать клуб
 //   GET  /api/tenant?r=mine     — клубы, где я владелец
 //   GET  /api/tenant?r=all      — все клубы платформы (только оператор)
+//   POST /api/tenant?r=delete   — удалить клуб (только оператор)
 const MAX_CLUBS_PER_OWNER = 3;
 
 module.exports = async function handler(req, res) {
@@ -27,6 +28,10 @@ module.exports = async function handler(req, res) {
     }
     if (r === "all" && req.method === "GET") {
       await all(req, res, auth);
+      return;
+    }
+    if (r === "delete" && req.method === "POST") {
+      await remove(req, res, auth);
       return;
     }
     if (r === "create" && req.method === "POST") {
@@ -67,6 +72,12 @@ async function all(req, res, auth) {
     status: c.status,
     createdAt: c.created_at,
     paidUntil: c.paid_until,
+    // Конец пробы = дата создания + неделя. Фронт по этой дате показывает
+    // «осталось N дней»; та же неделя используется в автозаморозке.
+    trialUntil: c.plan === "trial" && c.created_at
+      ? new Date(new Date(c.created_at).getTime() + db.TRIAL_DAYS * 86400000).toISOString()
+      : null,
+    isDefault: Boolean(c.is_default),
     bookingEnabled: Boolean(c.booking_enabled),
     clients: count(c.users),
     prizesOut: count(c.inventory),
@@ -79,6 +90,29 @@ async function all(req, res, auth) {
 // PostgREST возвращает встроенный агрегат как [{ count: N }].
 function count(embed) {
   return (embed && embed[0] && embed[0].count) || 0;
+}
+
+// Удаление клуба со всеми данными — только оператору. Дефолтный (первый)
+// клуб удалить нельзя: на него завязан вход без кода.
+async function remove(req, res, auth) {
+  if (!isPlatformOwner(auth.user.id)) {
+    res.status(403).json({ error: "forbidden" });
+    return;
+  }
+
+  const code = String((req.body && req.body.code) || "").trim();
+  const club = code ? await db.getClubByCode(code) : null;
+  if (!club) {
+    res.status(404).json({ error: "club_not_found" });
+    return;
+  }
+  if (club.is_default) {
+    res.status(400).json({ error: "cannot_delete_default" });
+    return;
+  }
+
+  await db.deleteClub(club.id);
+  res.status(200).json({ ok: true, code: club.code });
 }
 
 async function create(req, res, auth) {

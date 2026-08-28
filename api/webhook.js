@@ -49,7 +49,7 @@ module.exports = async function handler(req, res) {
       const staffClubs = await db.getStaffClubs(fromId);
 
       if (text === "/start" || text.startsWith("/start ")) {
-        await handleStart(chatId, message.from, text);
+        await handleStart(chatId, message.from, text, staffClubs);
       } else if (text === "/id") {
         await sendId(chatId, message.from);
       } else if (text === "/help") {
@@ -67,12 +67,18 @@ module.exports = async function handler(req, res) {
 
 // /start <clubcode> — заводим человека в конкретный клуб и показываем его
 // приветствие. Без кода (просто /start) — общий экран платформы.
-async function handleStart(chatId, from, text) {
+async function handleStart(chatId, from, text, staffClubs) {
   const payload = text.length > 6 ? text.slice(6).trim() : "";
   const code = payload.toLowerCase().replace(/[^a-z0-9]/g, "").slice(0, 6);
   const club = code ? await db.getClubByCode(code) : null;
 
   if (!club) {
+    // Кода клуба нет. Если человек владелец/сотрудник клубов — даём войти
+    // в них кнопками: ключ это его аккаунт, а не потерянная ссылка.
+    if (staffClubs && staffClubs.length) {
+      await sendClubList(chatId, staffClubs);
+      return;
+    }
     await sendMessage(
       chatId,
       "Это бот-рулетка для компьютерных клубов.\n\n" +
@@ -90,6 +96,26 @@ async function handleStart(chatId, from, text) {
 
   const existing = await db.getUser(club.id, from.id);
   if (!existing || !existing.phone) await askPhone(chatId);
+}
+
+// Список клубов человека кнопками — возврат без ссылки. Кнопка Web App
+// открывает мини-апп сразу в нужном клубе (?club=<code>).
+async function sendClubList(chatId, staffClubs) {
+  const rows = staffClubs
+    .filter((s) => s.clubs)
+    .map((s) => {
+      const c = s.clubs;
+      const label = (s.role === "owner" ? "👑 " : "🧑‍💼 ") + (c.name || c.code);
+      const url = WEBAPP_URL + (WEBAPP_URL.indexOf("?") === -1 ? "?" : "&") + "club=" + c.code;
+      return [{ text: label, web_app: { url: url } }];
+    });
+
+  if (!rows.length) {
+    await sendMessage(chatId, "Это бот-рулетка для компьютерных клубов. Откройте приложение по ссылке или QR своего клуба.");
+    return;
+  }
+
+  await sendMessage(chatId, "Ваши клубы — нажмите, чтобы открыть:", { inline_keyboard: rows });
 }
 
 async function handleStaffMessage(chatId, staffId, text, staffClubs) {

@@ -96,23 +96,33 @@
     el.resultCode.addEventListener("click", function () { copy(el.resultCode.dataset.code); });
 
     // Явный вход на создание клуба (?new=1) — в обход клуба по умолчанию.
+    // Явный вход на создание клуба (?new=1 / startapp=new). Если у человека
+    // уже есть клубы — показываем их (чтобы по одному QR не плодить дубли),
+    // с кнопкой «создать ещё»; если клубов нет — сразу форма создания.
     if (wantsNewClub()) {
-      showOnboarding("new");
+      api("/api/tenant?r=mine")
+        .then(function (res) {
+          var owned = (res && res.clubs) || [];
+          if (owned.length) showMyClubs(owned);
+          else showOnboarding("new");
+        })
+        .catch(function () { showOnboarding("new"); });
       return;
     }
 
-    // Вход без кода клуба (обычная кнопка бота, а не ссылка/QR): если
-    // человек — владелец ровно одного своего клуба, ведём его сразу в этот
-    // клуб, а не в клуб по умолчанию. Клиенты (не владеют клубом) как и
-    // раньше попадают в клуб по умолчанию.
+    // Вход без кода клуба (обычная кнопка бота): владельца ведём в его клуб,
+    // а не в клуб по умолчанию. Ключ — сам Telegram-аккаунт (владелец в
+    // clubs.owner_tg_id/staff), поэтому ссылка не нужна. Один клуб — входим
+    // сразу; несколько — показываем выбор; ни одного — клуб по умолчанию.
     if (!clubCode) {
       api("/api/tenant?r=mine")
         .then(function (res) {
           var owned = (res && res.clubs) || [];
+          if (owned.length >= 2) { showMyClubs(owned); return; }
           if (owned.length === 1 && owned[0].code) clubCode = owned[0].code;
+          loadClubConfig(Boolean(startParam));
         })
-        .catch(function () {})
-        .then(function () { loadClubConfig(Boolean(startParam)); });
+        .catch(function () { loadClubConfig(Boolean(startParam)); });
       return;
     }
 
@@ -164,12 +174,69 @@
   // вкладка «Админ» появится сама).
   function enterClub(code) {
     clubCode = code;
-    var onb = document.getElementById("view-onboarding");
-    if (onb) onb.hidden = true;
+    ["view-onboarding", "view-myclubs"].forEach(function (id) {
+      var v = document.getElementById(id);
+      if (v) v.hidden = true;
+    });
     if (el.tabs) el.tabs.hidden = false;
     setTab("wheel");
     el.banner.hidden = true;
     loadClubConfig(false);
+  }
+
+  // Экран выбора клуба для владельца нескольких клубов (или входа без
+  // ссылки). Каждый клуб — вход одним тапом плюс копируемая ссылка.
+  function showMyClubs(clubs) {
+    ["view-wheel", "view-inventory", "view-booking", "view-desk", "view-admin", "view-onboarding"].forEach(function (id) {
+      var v = document.getElementById(id);
+      if (v) v.hidden = true;
+    });
+    if (el.tabs) el.tabs.hidden = true;
+
+    var view = document.getElementById("view-myclubs");
+    if (view) view.hidden = false;
+
+    var list = document.getElementById("myClubsList");
+    if (list) {
+      list.innerHTML = "";
+      clubs.forEach(function (c) { list.appendChild(myClubCard(c)); });
+    }
+  }
+
+  function myClubCard(c) {
+    var li = document.createElement("li");
+    li.className = "card" + (c.status === "frozen" ? " blocked" : "");
+
+    var title = document.createElement("span");
+    title.appendChild(span(null, c.name || "Без названия"));
+    if (c.status === "frozen") title.appendChild(span("badge", "заморожен"));
+
+    var enter = document.createElement("button");
+    enter.className = "btn tiny";
+    enter.type = "button";
+    enter.textContent = "Войти →";
+    enter.addEventListener("click", function () { enterClub(c.code); });
+
+    var side = document.createElement("div");
+    side.className = "client-side";
+    side.appendChild(enter);
+
+    var wrap = row("🏢", "", "код: " + c.code, side);
+    var titleSlot = wrap.querySelector(".card-title");
+    titleSlot.textContent = "";
+    titleSlot.appendChild(title);
+    li.appendChild(wrap);
+
+    if (c.link) {
+      var linkBtn = document.createElement("button");
+      linkBtn.className = "result-code";
+      linkBtn.type = "button";
+      linkBtn.textContent = c.link;
+      linkBtn.addEventListener("click", function () { copy(c.link); });
+      li.appendChild(linkBtn);
+    }
+
+    return li;
   }
 
   function loadState() {
@@ -246,7 +313,7 @@
   // Показывается, когда клуб не определён: владелец создаёт свой клуб,
   // клиент понимает, что нужна ссылка именно его клуба.
   function showOnboarding(mode) {
-    ["view-wheel", "view-inventory", "view-booking", "view-desk", "view-admin"].forEach(function (id) {
+    ["view-wheel", "view-inventory", "view-booking", "view-desk", "view-admin", "view-myclubs"].forEach(function (id) {
       var v = document.getElementById(id);
       if (v) v.hidden = true;
     });
@@ -254,6 +321,13 @@
 
     var view = document.getElementById("view-onboarding");
     if (view) view.hidden = false;
+
+    // Форма создания видна, экран «готово» спрятан (могли прийти сюда
+    // повторно из выбора клубов кнопкой «создать ещё»).
+    var form = document.getElementById("onbForm");
+    var done = document.getElementById("onbDone");
+    if (form) form.hidden = false;
+    if (done) done.hidden = true;
 
     if (mode === "notfound") {
       var title = document.getElementById("onbTitle");
@@ -266,6 +340,8 @@
   function bindOnboarding() {
     var btn = document.getElementById("onbCreate");
     if (btn) btn.addEventListener("click", createClub);
+    var more = document.getElementById("myClubsNew");
+    if (more) more.addEventListener("click", function () { showOnboarding("new"); });
   }
 
   function createClub() {
@@ -480,13 +556,14 @@
 
     var title = document.createElement("span");
     title.appendChild(span(null, c.name || "Без названия"));
-    title.appendChild(span("badge", c.plan === "paid" ? "платный" : "триал"));
+    title.appendChild(span("badge", c.plan === "paid" ? "платный" : "проба"));
     if (c.status === "frozen") title.appendChild(span("badge", "заморожен"));
 
     var parts = [
       "код: " + c.code,
+      planExpiry(c),
       "клиентов: " + c.clients,
-      "призов выдано: " + c.prizesOut,
+      "призов: " + c.prizesOut,
       "создан " + ago(c.createdAt)
     ];
 
@@ -505,7 +582,48 @@
       li.appendChild(linkBtn);
     }
 
+    // Удаление клуба — необратимо; дефолтный (первый) клуб удалить нельзя.
+    if (!c.isDefault) {
+      var del = document.createElement("button");
+      del.className = "btn danger";
+      del.type = "button";
+      del.textContent = "Удалить клуб";
+      del.addEventListener("click", function () {
+        askConfirm(
+          "Удалить клуб «" + (c.name || c.code) + "» со всеми клиентами, призами и статистикой? Отменить нельзя.",
+          function () {
+            del.disabled = true;
+            del.textContent = "Удаляем...";
+            api("/api/tenant?r=delete", { method: "POST", body: { code: c.code } })
+              .then(function () { toast("Клуб удалён"); loadPlatform(); })
+              .catch(function (err) {
+                del.disabled = false;
+                del.textContent = "Удалить клуб";
+                toast("Не удалось удалить: " + err.message, true);
+              });
+          }
+        );
+      });
+      li.appendChild(del);
+    }
+
     return li;
+  }
+
+  // Строка про срок клуба: проба (осталось N дней) либо платная подписка
+  // (оплачено до даты / истекла).
+  function planExpiry(c) {
+    var iso = c.plan === "paid" ? c.paidUntil : c.trialUntil;
+    if (!iso) return c.plan === "paid" ? "платный" : "проба";
+    var days = Math.ceil((new Date(iso).getTime() - Date.now()) / 86400000);
+    if (c.plan === "paid") {
+      return days >= 0
+        ? "оплачено, ещё " + days + " дн (до " + shortDate(iso) + ")"
+        : "подписка истекла " + shortDate(iso);
+    }
+    return days >= 0
+      ? "проба: осталось " + days + " дн (до " + shortDate(iso) + ")"
+      : "проба истекла " + shortDate(iso);
   }
 
   /* ============================================================ лента призов */

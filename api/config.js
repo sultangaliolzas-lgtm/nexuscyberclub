@@ -65,6 +65,8 @@ module.exports = async function handler(req, res) {
 // due_reminders разослал бы клиентам настоящие напоминания.
 const CHECKS = [
   { module: "tenancy",       table: "clubs",       select: "code" },
+  { module: "tenancy",       table: "clubs",       select: "status" },
+  { module: "tenancy",       table: "clubs",       select: "is_default" },
   { module: "tenancy",       table: "settings",    select: "club_id" },
   { module: "tenancy",       table: "users",       select: "club_id" },
   { module: "prizes",        table: "prizes",      select: "key" },

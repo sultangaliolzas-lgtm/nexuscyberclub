@@ -1,4 +1,5 @@
 const crypto = require("crypto");
+const db = require("../lib/db");
 const { runReminders } = require("../lib/notify");
 
 // Ежедневная задача: предупредить клиентов, у которых приз сгорает в
@@ -18,8 +19,11 @@ module.exports = async function handler(req, res) {
 
   try {
     const result = await runReminders();
-    console.log("reminders:", JSON.stringify(result));
-    res.status(200).json(Object.assign({ ok: true }, result));
+    // Замораживаем клубы с истёкшей пробой/подпиской. Данные не удаляем —
+    // авто-удаление опасно; удаление остаётся ручным у оператора.
+    const frozen = await db.freezeExpiredClubs();
+    console.log("reminders:", JSON.stringify(result), "frozen:", JSON.stringify(frozen));
+    res.status(200).json(Object.assign({ ok: true, frozen: frozen }, result));
   } catch (err) {
     console.error("cron error:", err);
     res.status(500).json({ error: "internal_error" });
